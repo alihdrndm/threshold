@@ -1,8 +1,7 @@
 @import "tailwindcss";
 
-/* Semantic tokens. Phase 3 adds the rotating popup themes as
-   [data-theme="..."] blocks that override these same variables — that is why
-   nothing below references a raw colour outside this file. */
+/* Semantic tokens. The rotating popup themes override these same variables, so
+   nothing outside this file ever references a raw colour. */
 @theme {
   --color-surface: #0b0c0e;
   --color-surface-raised: #141619;
@@ -11,11 +10,11 @@
   --color-ink-muted: #8b8f96;
   --color-accent: #6b8afd;
 
-  /* Motion. Spec §6: nothing over 400ms, enter animations ease-out. */
-  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
-  --duration-enter: 300ms;
-  --duration-exit: 180ms;
+  /* Strong curves. The built-in CSS easings are too weak to read as
+     intentional. Never ease-in on UI: it delays the exact moment the eye is
+     watching most closely. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 html,
@@ -33,7 +32,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* The popup is not a document — nothing in this app should be selectable or
+/* The popup is not a document — nothing here should be selectable or
    right-click-menued like one. */
 * {
   user-select: none;
@@ -44,4 +43,181 @@ input,
 textarea {
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* ---------------------------------------------------------------------------
+   Rotating themes (spec §5, §7)
+
+   Identical dialogs are neurologically habituated within a handful of
+   exposures — the exact failure mode this app exists to interrupt. So the look
+   rotates daily alongside the interaction. Each theme is only a set of variable
+   overrides; no component knows which one is active.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="ash"] {
+  --color-surface: #0b0c0e;
+  --color-accent: #6b8afd;
+  --glow: rgba(107, 138, 253, 0.2);
+}
+
+:root[data-theme="ember"] {
+  --color-surface: #0e0b0a;
+  --color-accent: #e8a06b;
+  --glow: rgba(232, 160, 107, 0.18);
+}
+
+:root[data-theme="tide"] {
+  --color-surface: #080d0d;
+  --color-accent: #5fc7b8;
+  --glow: rgba(95, 199, 184, 0.18);
+}
+
+:root[data-theme="dusk"] {
+  --color-surface: #0c0a0f;
+  --color-accent: #a98bf0;
+  --glow: rgba(169, 139, 240, 0.18);
+}
+
+/* Fallback so the popup is never unstyled if a theme id goes missing. */
+:root {
+  --glow: rgba(107, 138, 253, 0.2);
+}
+
+/* The luminous centre that gives this design its name. Purely decorative, so
+   it is the first thing reduced-motion switches off. */
+.ritual-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(78vw, 820px);
+  aspect-ratio: 1;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: radial-gradient(
+    circle,
+    var(--glow) 0%,
+    color-mix(in srgb, var(--glow) 35%, transparent) 38%,
+    transparent 66%
+  );
+  transform: translate(-50%, -50%);
+  animation: glow-in 280ms var(--ease-out) both;
+}
+
+@keyframes glow-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* A paced human breath, deliberately exempt from the sub-300ms UI rule —
+   making it fast would defeat the entire point of it. */
+.ritual-breath {
+  animation: breathe 3s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(0.82);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 0.72;
+  }
+}
+
+/* A step is a group arriving together, so its parts cascade rather than
+   appearing as one slab. 40ms apart: long enough to read as sequence, short
+   enough that the last item is not kept waiting. The parent only fades; the
+   movement lives here so the two never fight. */
+.ritual-step > * {
+  animation: step-item 240ms var(--ease-out) both;
+}
+.ritual-step > *:nth-child(2) {
+  animation-delay: 40ms;
+}
+.ritual-step > *:nth-child(3) {
+  animation-delay: 80ms;
+}
+.ritual-step > *:nth-child(4) {
+  animation-delay: 120ms;
+}
+.ritual-step > *:nth-child(5) {
+  animation-delay: 160ms;
+}
+
+@keyframes step-item {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Pressables. Transform carries the strong ease-out because it is feedback and
+   the eye is on it; colour gets plain `ease`, which is what a tint wants.
+   `all` is never used — it would animate properties nobody asked for, off GPU. */
+.ritual-pressable,
+.ritual-exit {
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.ritual-pressable:active,
+.ritual-exit:active {
+  transform: scale(0.97);
+}
+
+.ritual-field {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+/* Touch devices fire hover on tap, so hover motion stays gated. */
+@media (hover: hover) and (pointer: fine) {
+  .ritual-pressable:hover {
+    background-color: color-mix(in srgb, var(--color-accent) 14%, transparent);
+    border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  }
+  .ritual-exit:hover {
+    color: var(--color-ink);
+    text-decoration: underline;
+  }
+}
+
+/* Reduced motion means fewer and gentler, not none: comprehension-carrying
+   fades stay, movement goes. */
+@media (prefers-reduced-motion: reduce) {
+  .ritual-glow {
+    animation: none;
+  }
+  .ritual-breath {
+    animation: none;
+    opacity: 0.5;
+  }
+  /* Keep the fade — it carries the sense that a step changed — drop the rise. */
+  .ritual-step > * {
+    animation: step-item-reduced 200ms ease both;
+  }
+  @keyframes step-item-reduced {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
 }
