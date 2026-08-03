@@ -68,6 +68,15 @@ export const THEMES: readonly Theme[] = [
  * differs tomorrow. Deriving it from the date rather than storing it means a
  * reinstall cannot accidentally serve the same day twice.
  */
+/**
+ * Force a specific theme, for previewing the rotation without waiting four
+ * days. Returns undefined for anything unrecognised so a typo falls back to
+ * the real rotation rather than showing nothing.
+ */
+export function themeById(id: string | null): Theme | undefined {
+  return THEMES.find((theme) => theme.id === id);
+}
+
 export function themeFor(date: Date): Theme {
   const days = Math.floor(
     new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime() /

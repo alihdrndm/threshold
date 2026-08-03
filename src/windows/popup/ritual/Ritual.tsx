@@ -6,7 +6,7 @@ import {
   rememberCategories,
   rememberedCategories,
 } from "@/lib/tauri";
-import { themeFor } from "@/themes";
+import { themeById, themeFor } from "@/themes";
 import {
   CATEGORIES,
   DURATIONS,
@@ -37,7 +37,10 @@ type StepId =
 
 export function Ritual({ trigger }: { trigger: string }) {
   const now = useMemo(() => new Date(), []);
-  const theme = useMemo(() => themeFor(now), [now]);
+  const theme = useMemo(() => {
+    const forced = new URLSearchParams(window.location.search).get("theme");
+    return themeById(forced) ?? themeFor(now);
+  }, [now]);
 
   const [step, setStep] = useState<StepId>("arrival");
   const [text, setText] = useState("");

@@ -22,10 +22,19 @@ pub fn show(app: &AppHandle, kind: TriggerKind) -> tauri::Result<()> {
         return Ok(());
     }
 
+    // `--theme=<id>` previews one of the rotating themes without waiting for
+    // its day to come round. Anything unrecognised falls back to the rotation.
+    let forced_theme = std::env::args()
+        .find_map(|arg| arg.strip_prefix("--theme=").map(str::to_owned))
+        .map(|id| format!("&theme={id}"))
+        .unwrap_or_default();
+
     let window = WebviewWindowBuilder::new(
         app,
         POPUP_LABEL,
-        WebviewUrl::App(format!("index.html?trigger={}", kind_slug(kind)).into()),
+        WebviewUrl::App(
+            format!("index.html?trigger={}{forced_theme}", kind_slug(kind)).into(),
+        ),
     )
     .title("Threshold")
     .decorations(false)
