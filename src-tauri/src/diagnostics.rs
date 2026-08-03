@@ -40,11 +40,16 @@ impl Diagnostics {
                 check.detail
             ));
         }
-        out.push_str(if self.healthy {
-            "\nEverything needed is in place.\n"
+        // Ordered by what actually stops the app working, most likely first.
+        out.push_str(if self.paused {
+            "\nThreshold is paused, so no ritual will appear at boot, wake or unlock \
+             however healthy everything else looks.\nResume it from the tray or from \
+             Settings.\n"
         } else if self.needs_repair {
             "\nBlocking cannot work until the helper is registered. \
              Run as administrator:\n    threshold.exe --register-helper\n"
+        } else if self.healthy {
+            "\nEverything needed is in place.\n"
         } else {
             "\nSome triggers are not set up; they will be registered next time the app starts.\n"
         });
@@ -52,8 +57,17 @@ impl Diagnostics {
     }
 }
 
+/// Diagnostics for the command line, where no app state exists yet.
+///
+/// Reads the pause directly from the database rather than reporting `None`.
+/// A `--doctor` that says "everything needed is in place" while a pause is
+/// silently swallowing every trigger is worse than no diagnostic at all — it
+/// actively points the investigation away from the cause.
 pub fn diagnostics() -> Diagnostics {
-    diagnostics_with_pause(None)
+    let paused = crate::db::open()
+        .ok()
+        .and_then(|conn| crate::pause::paused_until(&conn));
+    diagnostics_with_pause(paused)
 }
 
 fn format_unix(seconds: i64) -> String {
