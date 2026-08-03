@@ -42,6 +42,7 @@ pub fn show(app: &AppHandle, kind: TriggerKind) -> tauri::Result<()> {
     .skip_taskbar(true)
     .fullscreen(true)
     .visible(false)
+    .zoom_hotkeys_enabled(true)
     .build()?;
 
     window.show()?;

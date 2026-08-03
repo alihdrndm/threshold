@@ -11,9 +11,9 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-/// Above this many "Do First" tasks the UI shows a calm note. It is a nudge,
-/// never a block: self-set limits are kept, imposed ones breed workarounds.
-pub const DO_FIRST_SOFT_CAP: usize = 3;
+// The "Do First" soft cap lives in the UI (windows/dashboard/tasks/quadrants.ts)
+// rather than here. It is a nudge shown inline, never a rule the data layer
+// enforces - and a constant defined in two places is a constant that drifts.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

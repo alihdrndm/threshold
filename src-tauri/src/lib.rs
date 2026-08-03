@@ -209,6 +209,10 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
     .inner_size(1180.0, 780.0)
     .min_inner_size(880.0, 600.0)
     .center()
+    // Ctrl +/-/0 to resize everything, as in any other Windows app. Off by
+    // default in Tauri, and its absence is the kind of thing that quietly makes
+    // an app unusable for anyone who needs larger text.
+    .zoom_hotkeys_enabled(true)
     .build();
 
     match built {
