@@ -273,12 +273,27 @@ pub fn unregister_all() -> Vec<(String, Result<(), String>)> {
         .collect()
 }
 
-pub fn status() -> Vec<(String, bool)> {
+/// The executable each relaunch task currently points at.
+///
+/// Worth surfacing: a task registered from a development build keeps launching
+/// that build forever, which looks exactly like "the triggers do not work".
+pub fn registered_targets() -> Vec<(String, Option<String>)> {
     [LOGON_TASK, UNLOCK_TASK, RESUME_TASK]
         .iter()
         .map(|name| {
-            let exists = schtasks(&["/query", "/tn", name]).is_ok();
-            (name.to_string(), exists)
+            let target = schtasks(&["/query", "/tn", name, "/fo", "LIST", "/v"])
+                .ok()
+                .and_then(|out| {
+                    out.lines()
+                        .find(|line| line.trim_start().starts_with("Task To Run:"))
+                        .and_then(|line| line.split_once(':'))
+                        .map(|(_, value)| value.trim().to_string())
+                });
+            (name.to_string(), target)
         })
         .collect()
 }
+
+// `status()` was replaced by `registered_targets()`, which answers the same
+// question and also says which binary each task points at - the thing that
+// actually goes wrong.

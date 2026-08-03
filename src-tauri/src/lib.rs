@@ -59,7 +59,7 @@ pub fn run() {
             let conn = db::open().map_err(|err| format!("database unavailable: {err}"))?;
             app.manage(db::Db(Mutex::new(conn)));
 
-            startup::enable_autostart(&handle);
+            startup::sync_autostart(&handle);
             tray::create_tray(&handle)?;
             triggers::init(handle.clone());
 
@@ -118,8 +118,22 @@ pub fn handle_task_cli(args: &[String]) -> bool {
     }
 
     if args.iter().any(|a| a == "--task-status") {
-        for (name, exists) in scheduled_tasks::status() {
-            println!("{name}: {}", if exists { "registered" } else { "absent" });
+        let me = std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        for (name, target) in scheduled_tasks::registered_targets() {
+            match target {
+                None => println!("{name}: absent"),
+                Some(path) => {
+                    // A task pointing at a different build is the most likely
+                    // reason triggers appear not to fire.
+                    let stale = !path.to_lowercase().contains(me.trim_end_matches(".exe"));
+                    println!(
+                        "{name}: registered -> {path}{}",
+                        if stale { "   [not this build]" } else { "" }
+                    );
+                }
+            }
         }
         return true;
     }
