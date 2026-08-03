@@ -10,19 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "Threshold",
-        "width": 1180,
-        "height": 780,
-        "minWidth": 880,
-        "minHeight": 600,
-        "center": true,
-        "visible": false,
-        "decorations": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
@@ -36,9 +24,11 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "resources": ["../target/release/threshold-helper.exe"],
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "perMachine",
+        "installerHooks": "installer/uninstall.nsh"
       }
     }
   }

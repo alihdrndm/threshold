@@ -97,6 +97,36 @@ pub fn focus_on_task(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn pause_status(db: State<'_, Db>) -> Result<Option<i64>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    Ok(crate::pause::paused_until(&conn))
+}
+
+#[tauri::command]
+pub fn pause_for(db: State<'_, Db>, days: i64) -> Result<i64, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    crate::pause::pause_for_days(&conn, days)
+}
+
+#[tauri::command]
+pub fn resume_now(db: State<'_, Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    crate::pause::resume(&conn)
+}
+
+#[tauri::command]
+pub fn get_settings(db: State<'_, Db>) -> Result<Vec<(String, String)>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    db::all_settings(&conn)
+}
+
+#[tauri::command]
+pub fn set_setting(db: State<'_, Db>, key: String, value: String) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    db::set_setting(&conn, &key, &value)
+}
+
+#[tauri::command]
 pub fn recent_intentions(
     db: State<'_, Db>,
     limit: Option<i64>,

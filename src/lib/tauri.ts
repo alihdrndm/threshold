@@ -134,6 +134,27 @@ export function focusOnTask(): Promise<void> {
   return invoke<void>("focus_on_task");
 }
 
+/** Unix seconds a pause runs until, or null when nothing is paused. */
+export function pauseStatus(): Promise<number | null> {
+  return invoke<number | null>("pause_status");
+}
+
+export function pauseFor(days: number): Promise<number> {
+  return invoke<number>("pause_for", { days });
+}
+
+export function resumeNow(): Promise<void> {
+  return invoke<void>("resume_now");
+}
+
+export function getSettings(): Promise<[string, string][]> {
+  return invoke<[string, string][]>("get_settings");
+}
+
+export function setSetting(key: string, value: string): Promise<void> {
+  return invoke<void>("set_setting", { key, value });
+}
+
 /** True when running inside the Tauri webview rather than a plain browser. */
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
