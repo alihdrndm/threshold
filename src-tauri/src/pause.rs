@@ -13,6 +13,13 @@ use crate::db;
 
 const KEY: &str = "paused_until";
 
+/// The active pause, read through the app handle.
+pub fn paused_until_for(app: &tauri::AppHandle) -> Option<i64> {
+    use tauri::Manager;
+    app.try_state::<crate::db::Db>()
+        .and_then(|db| db.0.lock().ok().and_then(|conn| paused_until(&conn)))
+}
+
 /// Unix seconds the pause runs until, if one is active.
 pub fn paused_until(conn: &Connection) -> Option<i64> {
     db::get_setting(conn, KEY)

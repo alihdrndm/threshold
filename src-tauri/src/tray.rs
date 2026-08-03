@@ -96,6 +96,21 @@ fn update_tooltip(app: &AppHandle, text: &str) {
     }
 }
 
+/// Say plainly that nothing will interrupt, and until when.
+///
+/// A pause suppresses the app's entire purpose. Leaving that state invisible
+/// makes a deliberate break indistinguishable from a broken program — which is
+/// exactly how it was mistaken for one.
+pub fn set_paused(app: &AppHandle, until: i64) {
+    let days = ((until - chrono::Utc::now().timestamp()) / 86_400).max(0);
+    let when = if days >= 1 {
+        format!("{days}d")
+    } else {
+        "today".to_string()
+    };
+    update_tooltip(app, &format!("Threshold - PAUSED ({when} left)"));
+}
+
 /// Show how long a running commitment has left, so the tray answers "am I
 /// blocked, and until when?" without opening anything.
 pub fn set_status(app: &AppHandle, seconds_remaining: Option<i64>) {

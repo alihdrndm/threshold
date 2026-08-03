@@ -25,6 +25,8 @@ pub struct Diagnostics {
     pub healthy: bool,
     /// True when blocking specifically cannot work, which needs elevation to fix.
     pub needs_repair: bool,
+    /// True when a pause is swallowing every trigger.
+    pub paused: bool,
 }
 
 impl Diagnostics {
@@ -51,6 +53,20 @@ impl Diagnostics {
 }
 
 pub fn diagnostics() -> Diagnostics {
+    diagnostics_with_pause(None)
+}
+
+fn format_unix(seconds: i64) -> String {
+    chrono::DateTime::from_timestamp(seconds, 0)
+        .map(|dt| {
+            chrono::DateTime::<chrono::Local>::from(dt)
+                .format("%-d %B, %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| seconds.to_string())
+}
+
+pub fn diagnostics_with_pause(paused_until: Option<i64>) -> Diagnostics {
     let mut checks = Vec::new();
 
     let exe = std::env::current_exe()
@@ -108,6 +124,20 @@ pub fn diagnostics() -> Diagnostics {
         });
     }
 
+    // A pause suppresses every trigger. That is correct behaviour and a silent
+    // week of it is indistinguishable from the app being broken, so it is
+    // reported first among the things that stop it working.
+    if let Some(until) = paused_until {
+        checks.push(Check {
+            name: "Paused".into(),
+            ok: false,
+            detail: format!(
+                "no ritual will appear until {}. Resume it in Settings.",
+                format_unix(until)
+            ),
+        });
+    }
+
     let blocked_now = threshold_protocol::hosts_has_block();
     let lock = session::active_lock();
     checks.push(Check {
@@ -129,10 +159,12 @@ pub fn diagnostics() -> Diagnostics {
 
     let needs_repair = !helper_ok || !helper_present;
     let healthy = checks.iter().all(|check| check.ok);
+    let paused = paused_until.is_some();
 
     Diagnostics {
         checks,
         healthy,
         needs_repair,
+        paused,
     }
 }

@@ -166,8 +166,12 @@ pub fn focus_on_task(
 }
 
 #[tauri::command]
-pub fn diagnostics() -> crate::diagnostics::Diagnostics {
-    crate::diagnostics::diagnostics()
+pub fn diagnostics(db: State<'_, Db>) -> Result<crate::diagnostics::Diagnostics, String> {
+    let paused = {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        crate::pause::paused_until(&conn)
+    };
+    Ok(crate::diagnostics::diagnostics_with_pause(paused))
 }
 
 /// Re-register the elevated helper, prompting for administrator rights.

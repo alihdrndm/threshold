@@ -160,6 +160,7 @@ export interface Diagnostics {
   checks: DiagnosticCheck[];
   healthy: boolean;
   needsRepair: boolean;
+  paused: boolean;
 }
 
 export function getDiagnostics(): Promise<Diagnostics> {
