@@ -1,24 +1,15 @@
+mod commands;
+mod db;
 mod popup;
 mod startup;
 mod tray;
 mod triggers;
 
+use std::sync::Mutex;
+
 use tauri::{Manager, RunEvent};
 
 use triggers::{scheduled_tasks, TriggerKind};
-
-/// Round-trip probe for the IPC bridge. Phase 0 acceptance uses it; keep it
-/// until real commands exist.
-#[tauri::command]
-fn ping() -> String {
-    "Core responded.".to_string()
-}
-
-/// Phase 1 test affordance: let the popup close itself from the frontend.
-#[tauri::command]
-fn dismiss_popup(app: tauri::AppHandle) -> Result<(), String> {
-    popup::close(&app).map_err(|err| err.to_string())
-}
 
 pub fn run() {
     tauri::Builder::default()
@@ -37,9 +28,25 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent, // ignored on Windows
             Some(vec!["--autostart"]),
         ))
-        .invoke_handler(tauri::generate_handler![ping, dismiss_popup])
+        .invoke_handler(tauri::generate_handler![
+            commands::ping,
+            commands::dismiss_popup,
+            commands::finish_ritual,
+            commands::intention_suggestions,
+            commands::recent_intentions,
+            commands::remembered_categories,
+            commands::remember_categories,
+            commands::data_location,
+            commands::open_dashboard,
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // Without a database the ritual cannot record anything, which is
+            // the one thing it must not fail silently at.
+            let conn = db::open().map_err(|err| format!("database unavailable: {err}"))?;
+            app.manage(db::Db(Mutex::new(conn)));
+
             startup::enable_autostart(&handle);
             tray::create_tray(&handle)?;
             triggers::init(handle.clone());
@@ -101,6 +108,29 @@ pub fn handle_task_cli(args: &[String]) -> bool {
     if args.iter().any(|a| a == "--task-status") {
         for (name, exists) in scheduled_tasks::status() {
             println!("{name}: {}", if exists { "registered" } else { "absent" });
+        }
+        return true;
+    }
+
+    // Reading your own history should not require a SQLite client.
+    if args.iter().any(|a| a == "--recent") {
+        match db::open().and_then(|conn| db::intentions::recent(&conn, 20)) {
+            Ok(rows) if rows.is_empty() => println!("no intentions recorded yet"),
+            Ok(rows) => {
+                for row in rows {
+                    println!(
+                        "{} | {} | trigger={} | predicted_yes={:?} | {} min | blocks=[{}] | {}",
+                        row.ts,
+                        row.outcome,
+                        row.trigger.as_deref().unwrap_or("-"),
+                        row.predicted_yes,
+                        row.duration_min.map(|d| d.to_string()).unwrap_or("-".into()),
+                        row.categories.as_deref().unwrap_or(""),
+                        row.text.as_deref().unwrap_or("(no text)"),
+                    );
+                }
+            }
+            Err(err) => eprintln!("could not read history: {err}"),
         }
         return true;
     }
