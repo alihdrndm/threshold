@@ -23,6 +23,29 @@ npm run check       # tsc + eslint
 | Task relaunch path works | `schtasks /run /tn ThresholdUnlock` starts the app and shows the ritual |
 | Ritual closes cleanly | window closes, app stays resident |
 
+## Phase 2 — verified automatically
+
+Driven by keyboard rather than simulated mouse clicks: display scaling corrupts
+screen coordinates, and keyboard focus is immune to that, so the test cannot be
+fooled by a scaling bug into "clicking" the wrong thing.
+
+| Behaviour | Method |
+|---|---|
+| Every step renders | screenshot of each of the six screens |
+| Prediction step cannot be skipped | Enter from the intention field lands on the question, not past it |
+| Answers are the user's own | chose No and 50 min, both stored as chosen rather than defaulted |
+| Completed path records fully | `completed`, trigger, prediction, duration, categories, text |
+| Honourable exit records differently | `browsing`, no duration, no categories, no text |
+| Suggestions come from history | previous intention appears as a chip on the next run |
+| Block toggles are remembered | Social still selected on the next ritual |
+| Confirmation is neutral | "Intention set." with the first action, no praise |
+
+Reading the recorded history without a SQLite client:
+
+```
+threshold.exe --recent
+```
+
 ## Phase 1 — needs a person
 
 Register the tasks first (`threshold.exe --register-tasks`), and note that the
