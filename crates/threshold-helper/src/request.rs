@@ -59,6 +59,16 @@ pub fn program_data() -> PathBuf {
     PathBuf::from(PROGRAM_DATA)
 }
 
+/// Admin-only subdirectory holding the lock.
+///
+/// The request file must stay writable by the ordinary user - that is how the
+/// UI asks for anything. The lock must not: if you could edit it, you could
+/// simply shorten your own commitment, and the whole mechanism would be
+/// decorative.
+pub fn state_dir() -> PathBuf {
+    program_data().join("state")
+}
+
 pub fn request_path() -> PathBuf {
     program_data().join(REQUEST_FILE)
 }

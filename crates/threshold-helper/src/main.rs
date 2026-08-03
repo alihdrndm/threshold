@@ -51,7 +51,38 @@ fn now_secs() -> i64 {
 }
 
 fn lock_path() -> PathBuf {
-    request::program_data().join(lock::LOCK_FILE)
+    request::state_dir().join(lock::LOCK_FILE)
+}
+
+/// Lock down the state directory: SYSTEM and Administrators may write, everyone
+/// else may only read. Without this the commitment lock is decorative, because
+/// the person it is meant to hold could simply edit it.
+fn secure_state_dir() -> Result<(), String> {
+    let dir = request::state_dir();
+    std::fs::create_dir_all(&dir).map_err(|err| format!("could not create {dir:?}: {err}"))?;
+
+    let path = dir.to_string_lossy().to_string();
+    let output = std::process::Command::new("icacls")
+        .args([
+            &path,
+            "/inheritance:r",
+            "/grant:r",
+            "*S-1-5-18:(OI)(CI)F", // SYSTEM
+            "/grant:r",
+            "*S-1-5-32-544:(OI)(CI)F", // Administrators
+            "/grant:r",
+            "*S-1-5-32-545:(OI)(CI)RX", // Users: read and execute only
+        ])
+        .output()
+        .map_err(|err| format!("could not run icacls: {err}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "could not secure the state directory: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
 }
 
 fn read_lock() -> lock::Stored {
@@ -99,8 +130,7 @@ fn block(req: &Request) -> Result<String, String> {
     policies::apply()?;
     flush_dns();
 
-    std::fs::create_dir_all(request::program_data())
-        .map_err(|err| format!("could not create state directory: {err}"))?;
+    secure_state_dir()?;
     std::fs::write(lock_path(), lock::render(&new_lock))
         .map_err(|err| format!("could not write lock: {err}"))?;
 

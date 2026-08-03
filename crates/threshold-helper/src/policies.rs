@@ -12,8 +12,9 @@
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegSetValueExW, HKEY, HKEY_LOCAL_MACHINE,
-    KEY_SET_VALUE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ,
+    RegCloseKey, RegCreateKeyExW, RegDeleteKeyW, RegDeleteValueW, RegOpenKeyExW, RegQueryInfoKeyW,
+    RegSetValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, REG_DWORD,
+    REG_OPTION_NON_VOLATILE, REG_SZ,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -31,6 +32,9 @@ pub struct Policy {
     pub name: &'static str,
     pub value: Value,
 }
+
+/// Never delete at or above this path, however empty it looks.
+pub const POLICIES_ROOT: &str = r"SOFTWARE\Policies";
 
 pub const POLICIES: &[Policy] = &[
     Policy {
@@ -146,6 +150,52 @@ pub fn apply() -> Result<(), String> {
     Ok(())
 }
 
+/// Delete the key itself, but only when nothing else lives in it.
+///
+/// These keys are shared ground: an organisation may have its own Chrome
+/// policies under the same path. Removing a key that still holds values or
+/// subkeys would destroy settings that were never ours.
+fn delete_if_empty(path: &str) {
+    let wide_path = wide(path);
+    let mut key = HKEY::default();
+    let opened = unsafe {
+        RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR(wide_path.as_ptr()),
+            None,
+            KEY_READ,
+            &mut key,
+        )
+    };
+    if opened != ERROR_SUCCESS {
+        return;
+    }
+
+    let mut values = 0u32;
+    let mut subkeys = 0u32;
+    let status = unsafe {
+        RegQueryInfoKeyW(
+            key,
+            None,
+            None,
+            None,
+            Some(&mut subkeys),
+            None,
+            None,
+            Some(&mut values),
+            None,
+            None,
+            None,
+            None,
+        )
+    };
+    let _ = unsafe { RegCloseKey(key) };
+
+    if status == ERROR_SUCCESS && values == 0 && subkeys == 0 {
+        let _ = unsafe { RegDeleteKeyW(HKEY_LOCAL_MACHINE, PCWSTR(wide_path.as_ptr())) };
+    }
+}
+
 pub fn remove() -> Result<(), String> {
     for policy in POLICIES {
         // A key that never existed is already in the desired state.
@@ -159,6 +209,19 @@ pub fn remove() -> Result<(), String> {
             let _ = unsafe { RegDeleteValueW(key, PCWSTR(locked.as_ptr())) };
         }
         let _ = unsafe { RegCloseKey(key) };
+
+        // Leave no empty shell behind: a machine that has finished with
+        // Threshold should look like it never met it. Creating a nested key
+        // creates its parents too, so those get the same treatment - each still
+        // guarded by "only if empty", and never above SOFTWARE\Policies.
+        let mut path = policy.path;
+        loop {
+            delete_if_empty(path);
+            match path.rsplit_once('\\') {
+                Some((parent, _)) if parent.len() > POLICIES_ROOT.len() => path = parent,
+                _ => break,
+            }
+        }
     }
     Ok(())
 }
@@ -173,6 +236,35 @@ mod tests {
         assert!(browsers.contains(&"Chrome"));
         assert!(browsers.contains(&"Edge"));
         assert!(browsers.contains(&"Firefox"));
+    }
+
+    /// Mirrors the walk in `remove()` so the stopping rule is testable without
+    /// touching the real registry.
+    fn parents_walked(path: &str) -> Vec<String> {
+        let mut visited = vec![path.to_string()];
+        let mut current = path;
+        loop {
+            match current.rsplit_once('\\') {
+                Some((parent, _)) if parent.len() > POLICIES_ROOT.len() => {
+                    visited.push(parent.to_string());
+                    current = parent;
+                }
+                _ => break,
+            }
+        }
+        visited
+    }
+
+    #[test]
+    fn cleanup_walks_up_to_but_never_past_the_policies_root() {
+        let walked = parents_walked(r"SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS");
+        assert!(walked.contains(&r"SOFTWARE\Policies\Mozilla\Firefox".to_string()));
+        assert!(walked.contains(&r"SOFTWARE\Policies\Mozilla".to_string()));
+        assert!(
+            !walked.contains(&POLICIES_ROOT.to_string()),
+            "must never consider deleting SOFTWARE\\Policies itself"
+        );
+        assert!(!walked.contains(&"SOFTWARE".to_string()));
     }
 
     #[test]

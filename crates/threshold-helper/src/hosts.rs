@@ -21,12 +21,26 @@ pub fn system_hosts() -> PathBuf {
     PathBuf::from(r"C:\Windows\System32\drivers\etc\hosts")
 }
 
+/// The line ending the file already uses.
+///
+/// Windows hosts files are CRLF. Rewriting the whole file to LF would work, but
+/// it changes bytes outside our block - which is exactly what this module
+/// promises never to do.
+pub fn line_ending(existing: &str) -> &'static str {
+    if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
 /// Strip any existing Threshold block, returning the untouched remainder.
 ///
 /// Self-healing on purpose: an unterminated block (from a crash, or a hand
 /// edit) is dropped from the marker to the end rather than being left to
 /// accumulate forever.
 pub fn without_block(existing: &str) -> String {
+    let eol = line_ending(existing);
     let mut out = String::with_capacity(existing.len());
     let mut inside = false;
 
@@ -42,13 +56,14 @@ pub fn without_block(existing: &str) -> String {
         }
         if !inside {
             out.push_str(line);
-            out.push('\n');
+            out.push_str(eol);
         }
     }
 
     // Collapse trailing blank lines so repeated writes do not grow the file.
-    while out.ends_with("\n\n") {
-        out.pop();
+    let doubled = format!("{eol}{eol}");
+    while out.ends_with(&doubled) {
+        out.truncate(out.len() - eol.len());
     }
     out
 }
@@ -56,6 +71,7 @@ pub fn without_block(existing: &str) -> String {
 /// The file contents with the given hosts blocked. An empty list removes the
 /// block entirely rather than leaving empty markers behind.
 pub fn with_block(existing: &str, hosts: &[String]) -> String {
+    let eol = line_ending(existing);
     let base = without_block(existing);
 
     if hosts.is_empty() {
@@ -63,18 +79,18 @@ pub fn with_block(existing: &str, hosts: &[String]) -> String {
     }
 
     let mut out = base;
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
+    if !out.is_empty() && !out.ends_with(eol) {
+        out.push_str(eol);
     }
     out.push_str(BEGIN);
-    out.push('\n');
+    out.push_str(eol);
     for host in hosts {
         out.push_str("0.0.0.0 ");
         out.push_str(host);
-        out.push('\n');
+        out.push_str(eol);
     }
     out.push_str(END);
-    out.push('\n');
+    out.push_str(eol);
     out
 }
 
@@ -148,6 +164,31 @@ mod tests {
         let cleared = without_block(&damaged);
         assert!(!cleared.contains("a.com"));
         assert!(cleared.contains("127.0.0.1 localhost"));
+    }
+
+    #[test]
+    fn a_crlf_file_stays_crlf() {
+        let windows_style = "127.0.0.1 localhost\r\n::1 localhost\r\n";
+        let blocked = with_block(windows_style, &hosts(&["a.com"]));
+        assert!(blocked.contains("\r\n"), "CRLF must be preserved");
+        assert!(
+            !blocked.replace("\r\n", "").contains('\n'),
+            "no bare LF should be introduced"
+        );
+    }
+
+    #[test]
+    fn blocking_then_unblocking_restores_the_file_byte_for_byte() {
+        // The whole promise of this module: bytes outside the markers are ours
+        // to read and nobody's to rewrite.
+        for original in [
+            "127.0.0.1 localhost\r\n::1 localhost\r\n",
+            "127.0.0.1 localhost\n::1 localhost\n",
+        ] {
+            let blocked = with_block(original, &hosts(&["a.com", "b.com"]));
+            let restored = with_block(&blocked, &[]);
+            assert_eq!(restored, original, "round trip must be byte-identical");
+        }
     }
 
     #[test]
