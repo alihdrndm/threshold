@@ -1,19 +1,30 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence } from "motion/react";
 import {
   finishRitual,
   intentionSuggestions,
   rememberCategories,
   rememberedCategories,
 } from "@/lib/tauri";
+import { themeFor } from "@/themes";
 import {
   CATEGORIES,
   DURATIONS,
   IF_THEN_DEFAULTS,
-  greetingFor,
+  MAX_DURATION,
+  MIN_DURATION,
   timeLabel,
 } from "./copy";
-import { Choice, Hint, HonourableExit, Question, Step } from "./Shell";
+import {
+  Eyebrow,
+  Field,
+  Glow,
+  Hint,
+  HonourableExit,
+  Pill,
+  Question,
+  Step,
+} from "./Shell";
 
 type StepId =
   | "arrival"
@@ -25,28 +36,37 @@ type StepId =
   | "browsing";
 
 export function Ritual({ trigger }: { trigger: string }) {
+  const now = useMemo(() => new Date(), []);
+  const theme = useMemo(() => themeFor(now), [now]);
+
   const [step, setStep] = useState<StepId>("arrival");
   const [text, setText] = useState("");
   const [predictedYes, setPredictedYes] = useState<boolean | null>(null);
   const [ifThen, setIfThen] = useState<string>(IF_THEN_DEFAULTS[0]);
+  const [customIfThen, setCustomIfThen] = useState("");
   const [duration, setDuration] = useState<number>(25);
   const [categories, setCategories] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
 
-  const now = useMemo(() => new Date(), []);
+  // The theme owns the palette; nothing below reads a raw colour.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme.dataAttr;
+  }, [theme]);
 
   useEffect(() => {
-    intentionSuggestions().then(setSuggestions).catch(() => setSuggestions([]));
+    intentionSuggestions()
+      .then(setSuggestions)
+      .catch(() => setSuggestions([]));
     rememberedCategories()
-      .then((saved) => setCategories(saved ? saved.split(",").filter(Boolean) : []))
+      .then((saved) =>
+        setCategories(saved ? saved.split(",").filter(Boolean) : []),
+      )
       .catch(() => setCategories([]));
   }, []);
 
   function toggleCategory(id: string) {
     setCategories((current) =>
-      current.includes(id)
-        ? current.filter((c) => c !== id)
-        : [...current, id],
+      current.includes(id) ? current.filter((c) => c !== id) : [...current, id],
     );
   }
 
@@ -54,11 +74,11 @@ export function Ritual({ trigger }: { trigger: string }) {
     const joined = categories.join(",");
     await rememberCategories(joined).catch(() => {});
     setStep("confirm");
-    // The confirmation is read, not clicked past. Deliberately plain.
+    // The confirmation is read, not clicked past.
     setTimeout(() => {
       void finishRitual({
         text: text.trim() || null,
-        ifThen,
+        ifThen: customIfThen.trim() || ifThen,
         predictedYes,
         durationMin: duration,
         categories: joined || null,
@@ -81,157 +101,188 @@ export function Ritual({ trigger }: { trigger: string }) {
     });
   }
 
+  const canContinue = theme.intentionMode === "type" ? text.trim() !== "" : true;
+
   return (
-    <main className="relative flex h-full flex-col items-center justify-center px-8">
+    <main className="relative flex h-full items-center justify-center overflow-hidden px-8">
+      <Glow />
+
       <AnimatePresence mode="wait">
         {step === "arrival" && (
           <Step stepKey="arrival">
-            <Breath onDone={() => setStep("intention")} />
-            <Question>{greetingFor(now)}</Question>
+            <div
+              aria-hidden
+              className="ritual-breath h-24 w-24 rounded-full border border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+            />
+            <Question>{theme.copy.greeting}</Question>
             <Hint>{timeLabel(now)}</Hint>
-            <Choice onClick={() => setStep("intention")} autoFocus>
+            <Pill autoFocus onClick={() => setStep("intention")}>
               Begin
-            </Choice>
+            </Pill>
           </Step>
         )}
 
         {step === "intention" && (
           <Step stepKey="intention">
-            <Question>What are you here for?</Question>
-            <input
-              autoFocus
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && text.trim()) setStep("prediction");
-              }}
-              placeholder="One line is enough"
-              className="w-full border-b border-[var(--color-border-subtle)] bg-transparent pb-3 text-center text-xl text-[var(--color-ink)] outline-none transition-colors duration-150 placeholder:text-[var(--color-ink-muted)]/60 focus:border-[var(--color-accent)]"
-            />
+            <Eyebrow>Intention</Eyebrow>
+            <Question>{theme.copy.intentionPrompt}</Question>
+
+            {theme.intentionMode === "type" && (
+              <Field
+                autoFocus
+                value={text}
+                onChange={setText}
+                onSubmit={() => text.trim() && setStep("prediction")}
+                placeholder="One line is enough"
+              />
+            )}
+
             {suggestions.length > 0 && (
               <div className="flex flex-wrap justify-center gap-2">
                 {suggestions.map((suggestion) => (
-                  <button
+                  <Pill
                     key={suggestion}
-                    type="button"
+                    selected={text === suggestion}
                     onClick={() => {
                       setText(suggestion);
                       setStep("prediction");
                     }}
-                    className="rounded-full border border-[var(--color-border-subtle)] px-4 py-1.5 text-sm text-[var(--color-ink-muted)] transition-colors duration-150 hover:bg-white/5 hover:text-[var(--color-ink)]"
                   >
                     {suggestion}
-                  </button>
+                  </Pill>
                 ))}
               </div>
             )}
-            <Choice onClick={() => text.trim() && setStep("prediction")}>
+
+            {/* On "choose" days the field is the fallback, not the default. */}
+            {theme.intentionMode === "choose" && (
+              <Field
+                value={text}
+                onChange={setText}
+                onSubmit={() => text.trim() && setStep("prediction")}
+                placeholder="Or write it"
+              />
+            )}
+
+            <Pill onClick={() => canContinue && setStep("prediction")}>
               Continue
-            </Choice>
+            </Pill>
           </Step>
         )}
 
         {step === "prediction" && (
           <Step stepKey="prediction">
+            <Eyebrow>Prediction</Eyebrow>
             {/* Phrased as a prediction, not an intention: the question-behaviour
                 effect is strongest in this form, and strongest via a screen. */}
-            <Question>Will you start this before opening anything else?</Question>
+            <Question>{theme.copy.predictionPrompt}</Question>
             {/* Neither answer is focused. Focusing one would let a stray Enter
                 from the previous step answer on the user's behalf, and would
-                nudge toward that answer even when it does not — either way the
+                nudge toward that answer even when it did not — either way the
                 recorded prediction stops being their real one, which is the
                 only thing that makes this question worth asking. */}
             <div className="flex gap-4">
-              <Choice
+              <Pill
                 onClick={() => {
                   setPredictedYes(true);
                   setStep("ifthen");
                 }}
               >
                 Yes
-              </Choice>
-              <Choice
+              </Pill>
+              <Pill
                 onClick={() => {
                   setPredictedYes(false);
                   setStep("ifthen");
                 }}
               >
                 No
-              </Choice>
+              </Pill>
             </div>
           </Step>
         )}
 
         {step === "ifthen" && (
           <Step stepKey="ifthen">
-            <Question>If I feel the urge to open a feed, then I will…</Question>
-            <div className="flex w-full flex-col gap-3">
+            <Eyebrow>Plan</Eyebrow>
+            <Question>{theme.copy.ifThenPrompt}</Question>
+            <div className="flex w-full flex-col items-center gap-3">
               {IF_THEN_DEFAULTS.map((option) => (
-                <button
+                <Pill
                   key={option}
-                  type="button"
+                  selected={!customIfThen && ifThen === option}
                   onClick={() => {
                     setIfThen(option);
+                    setCustomIfThen("");
                     setStep("commit");
                   }}
-                  className={`rounded-xl border px-5 py-3 text-left text-base transition-colors duration-150 ${
-                    ifThen === option
-                      ? "border-[var(--color-accent)] text-[var(--color-ink)]"
-                      : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:bg-white/5 hover:text-[var(--color-ink)]"
-                  }`}
                 >
                   …{option}
-                </button>
+                </Pill>
               ))}
-              <input
-                value={IF_THEN_DEFAULTS.includes(ifThen as never) ? "" : ifThen}
-                onChange={(e) => setIfThen(e.target.value)}
+              <Field
+                value={customIfThen}
+                onChange={setCustomIfThen}
+                onSubmit={() => setStep("commit")}
                 placeholder="…something else"
-                className="rounded-xl border border-[var(--color-border-subtle)] bg-transparent px-5 py-3 text-base text-[var(--color-ink)] outline-none transition-colors duration-150 placeholder:text-[var(--color-ink-muted)]/60 focus:border-[var(--color-accent)]"
               />
             </div>
-            <Choice onClick={() => setStep("commit")}>Continue</Choice>
+            <Pill onClick={() => setStep("commit")}>Continue</Pill>
           </Step>
         )}
 
         {step === "commit" && (
           <Step stepKey="commit">
-            <Question>How long?</Question>
-            <div className="flex gap-3">
-              {DURATIONS.map((minutes) => (
-                <Choice
-                  key={minutes}
-                  selected={duration === minutes}
-                  autoFocus={minutes === DURATIONS[0]}
-                  onClick={() => setDuration(minutes)}
-                >
-                  {minutes} min
-                </Choice>
-              ))}
-            </div>
+            <Eyebrow>Commitment</Eyebrow>
+            <Question>{theme.copy.durationPrompt}</Question>
 
-            <div className="flex w-full flex-col gap-2">
+            {theme.durationMode === "chips" ? (
+              <div className="flex gap-3">
+                {DURATIONS.map((minutes) => (
+                  <Pill
+                    key={minutes}
+                    selected={duration === minutes}
+                    onClick={() => setDuration(minutes)}
+                  >
+                    {minutes} min
+                  </Pill>
+                ))}
+              </div>
+            ) : (
+              <div className="flex w-full flex-col items-center gap-3">
+                <p className="text-2xl font-light text-[var(--color-ink)]">
+                  {duration} min
+                </p>
+                <input
+                  type="range"
+                  min={MIN_DURATION}
+                  max={MAX_DURATION}
+                  step={5}
+                  value={duration}
+                  onChange={(event) => setDuration(Number(event.target.value))}
+                  aria-label="Session length in minutes"
+                  className="h-1 w-full max-w-sm cursor-pointer appearance-none rounded-full bg-[var(--color-border-subtle)] accent-[var(--color-accent)]"
+                />
+              </div>
+            )}
+
+            <div className="flex flex-col items-center gap-2">
               <Hint>Quiet these while you work</Hint>
               <div className="flex flex-wrap justify-center gap-2">
                 {CATEGORIES.map((category) => (
-                  <button
+                  <Pill
                     key={category.id}
-                    type="button"
-                    onClick={() => toggleCategory(category.id)}
-                    className={`rounded-full border px-4 py-2 text-sm transition-colors duration-150 ${
-                      categories.includes(category.id)
-                        ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-ink)]"
-                        : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:bg-white/5"
-                    }`}
+                    selected={categories.includes(category.id)}
                     title={category.detail}
+                    onClick={() => toggleCategory(category.id)}
                   >
                     {category.label}
-                  </button>
+                  </Pill>
                 ))}
               </div>
             </div>
 
-            <Choice onClick={() => void commit()}>Set intention</Choice>
+            <Pill onClick={() => void commit()}>Set intention</Pill>
           </Step>
         )}
 
@@ -250,10 +301,8 @@ export function Ritual({ trigger }: { trigger: string }) {
             {/* Same reasoning as the prediction step: an unfocused pair keeps
                 the answer the user's own. */}
             <div className="flex gap-4">
-              <Choice onClick={() => void browsing(true)}>
-                Yes
-              </Choice>
-              <Choice onClick={() => void browsing(false)}>No</Choice>
+              <Pill onClick={() => void browsing(true)}>Yes</Pill>
+              <Pill onClick={() => void browsing(false)}>No</Pill>
             </div>
           </Step>
         )}
@@ -263,29 +312,5 @@ export function Ritual({ trigger }: { trigger: string }) {
         <HonourableExit onClick={() => setStep("browsing")} />
       )}
     </main>
-  );
-}
-
-/**
- * A three second expanding circle. Skippable by clicking, because a breath you
- * are forced to take is just a delay.
- */
-function Breath({ onDone }: { onDone: () => void }) {
-  const done = useRef(false);
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      done.current = true;
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [onDone]);
-
-  return (
-    <motion.div
-      aria-hidden
-      initial={{ scale: 0.6, opacity: 0.25 }}
-      animate={{ scale: 1, opacity: 0.5 }}
-      transition={{ duration: 3, ease: "easeInOut" }}
-      className="h-24 w-24 rounded-full border border-[var(--color-accent)]"
-    />
   );
 }

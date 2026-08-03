@@ -1,18 +1,12 @@
 /**
- * Every string in the ritual, in one place.
+ * Copy that does not rotate. Per-day phrasing lives with the themes; what is
+ * here is fixed because changing it would change what is being measured.
  *
- * Tone rules from the spec, which are not stylistic preferences but load-bearing:
- * calm, adult, slightly warm, zero exclamation marks. Nothing congratulates the
- * user for *stating* an intention — praise at that moment licenses the very
+ * Tone rules from the spec, which are load-bearing rather than stylistic: calm,
+ * adult, slightly warm, zero exclamation marks. Nothing congratulates the user
+ * for *stating* an intention — praise at that moment licenses the very
  * behaviour being avoided. Reward is reserved for finishing.
  */
-
-export const GREETINGS = [
-  "Fresh session.",
-  "Back at it.",
-  "Here again.",
-  "New start.",
-] as const;
 
 export const IF_THEN_DEFAULTS = [
   "take one breath and return to my task",
@@ -22,6 +16,9 @@ export const IF_THEN_DEFAULTS = [
 
 export const DURATIONS = [25, 50, 90] as const;
 
+export const MIN_DURATION = 10;
+export const MAX_DURATION = 120;
+
 export interface BlockCategory {
   id: string;
   label: string;
@@ -29,21 +26,14 @@ export interface BlockCategory {
 }
 
 /**
- * Categories, not a verdict. The spec is explicit that a hardcoded list of
- * "bad sites" moralises and gets ignored; what drives real reduction is the
- * user classifying their own.
+ * Categories, not a verdict. A hardcoded list of "bad sites" moralises and gets
+ * ignored; what drives real reduction is the user classifying their own.
  */
 export const CATEGORIES: BlockCategory[] = [
   { id: "social", label: "Social", detail: "facebook, instagram, x" },
   { id: "video", label: "Video", detail: "youtube, tiktok" },
   { id: "forums", label: "Forums", detail: "reddit" },
 ];
-
-export function greetingFor(date: Date): string {
-  // Rotates by day so the opening line is not the same wallpaper every morning.
-  const dayIndex = Math.floor(date.getTime() / 86_400_000);
-  return GREETINGS[dayIndex % GREETINGS.length];
-}
 
 export function timeLabel(date: Date): string {
   return date.toLocaleString(undefined, {
