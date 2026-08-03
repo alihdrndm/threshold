@@ -177,6 +177,75 @@ fn register_one(name: &str, xml: String) -> Result<(), String> {
     result.map(|_| ())
 }
 
+pub const HELPER_TASK: &str = "ThresholdHelper";
+
+/// The one elevated task, and therefore the one UAC prompt Threshold ever
+/// shows. It has no triggers: it only ever runs on demand, and it takes no
+/// arguments, so being able to start it grants nothing beyond "apply whatever
+/// the schema-checked request file says".
+fn helper_task_xml(exe: &str, user: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Threshold - applies blocking changes that require administrator rights.</Description>
+  </RegistrationInfo>
+  <Triggers />
+  <Principals>
+    <Principal id="Author">
+      <UserId>{user}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>"{exe}"</Command>
+    </Exec>
+  </Actions>
+</Task>"#
+    )
+}
+
+/// Register the elevated helper task. Requires administrator rights; this is
+/// the install-time UAC prompt.
+pub fn register_helper(helper_exe: &str) -> Result<(), String> {
+    let user = current_user()?;
+    register_one(HELPER_TASK, helper_task_xml(helper_exe, &user))
+}
+
+pub fn unregister_helper() -> Result<(), String> {
+    schtasks(&["/delete", "/tn", HELPER_TASK, "/f"]).map(|_| ())
+}
+
+/// Whether the elevated task exists. Settings will show this so the one UAC
+/// prompt can be re-run if the task is ever removed.
+#[allow(dead_code)]
+pub fn helper_registered() -> bool {
+    schtasks(&["/query", "/tn", HELPER_TASK]).is_ok()
+}
+
+/// Ask the elevated task to act on the request file already on disk.
+pub fn run_helper() -> Result<(), String> {
+    schtasks(&["/run", "/tn", HELPER_TASK]).map(|_| ())
+}
+
 pub fn register_all() -> Result<Vec<String>, String> {
     let exe = exe_path()?;
     let user = current_user()?;

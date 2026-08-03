@@ -112,6 +112,42 @@ pub fn handle_task_cli(args: &[String]) -> bool {
         return true;
     }
 
+    // Install-time: register the one elevated task. Needs administrator rights,
+    // and is the only UAC prompt Threshold ever causes.
+    if let Some(arg) = args.iter().find(|a| a.starts_with("--register-helper")) {
+        let helper = arg
+            .split_once('=')
+            .map(|(_, path)| path.to_string())
+            .unwrap_or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|exe| exe.parent().map(|dir| dir.join("threshold-helper.exe")))
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            });
+        match scheduled_tasks::register_helper(&helper) {
+            Ok(()) => println!("registered {} -> {helper}", scheduled_tasks::HELPER_TASK),
+            Err(err) => eprintln!("could not register the helper task: {err}"),
+        }
+        return true;
+    }
+
+    if args.iter().any(|a| a == "--unregister-helper") {
+        match scheduled_tasks::unregister_helper() {
+            Ok(()) => println!("removed {}", scheduled_tasks::HELPER_TASK),
+            Err(err) => eprintln!("could not remove the helper task: {err}"),
+        }
+        return true;
+    }
+
+    if args.iter().any(|a| a == "--run-helper") {
+        match scheduled_tasks::run_helper() {
+            Ok(()) => println!("helper task started"),
+            Err(err) => eprintln!("could not start the helper task: {err}"),
+        }
+        return true;
+    }
+
     // Reading your own history should not require a SQLite client.
     if args.iter().any(|a| a == "--recent") {
         match db::open().and_then(|conn| db::intentions::recent(&conn, 20)) {
