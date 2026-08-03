@@ -9,6 +9,17 @@
 ; the file. The registry and task cleanup below is the belt to that braces: it
 ; runs whether or not the helper was reachable.
 
+; Register the elevated helper while the installer already holds elevation.
+;
+; Without this, a fresh install has no ThresholdHelper task, so committing to a
+; session silently blocks nothing — the app looks like it works and does not.
+; The relaunch triggers are per-user and register themselves on first run, so
+; they are deliberately not done here: the installer may be elevated as a
+; different account than the one that will use the app.
+!macro NSIS_HOOK_POSTINSTALL
+  nsExec::ExecToLog '"$INSTDIR\threshold.exe" --register-helper="$INSTDIR\threshold-helper.exe"'
+!macroend
+
 !macro NSIS_HOOK_PREUNINSTALL
   ; Ask the helper to lift any block while it still exists on disk.
   CreateDirectory "C:\ProgramData\Threshold"

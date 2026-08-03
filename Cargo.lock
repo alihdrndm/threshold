@@ -3696,6 +3696,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-single-instance",
+ "threshold-protocol",
  "windows 0.62.2",
 ]
 
@@ -3706,7 +3707,16 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "threshold-protocol",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "threshold-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

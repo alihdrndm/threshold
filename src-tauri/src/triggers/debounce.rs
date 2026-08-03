@@ -58,10 +58,6 @@ impl Default for TriggerState {
     }
 }
 
-// Session tracking and the configurable threshold are exercised by the tests
-// below and wired to real sessions in Phase 4; the rules belong with the rest
-// of the debounce logic rather than being invented later alongside blocking.
-#[allow(dead_code)]
 impl TriggerState {
     pub fn with_lock_threshold(lock_threshold: Duration) -> Self {
         Self {

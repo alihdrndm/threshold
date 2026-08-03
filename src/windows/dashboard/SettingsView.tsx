@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 import {
+  getDiagnostics,
   getSettings,
   pauseFor,
   pauseStatus,
+  repairHelper,
   resumeNow,
   setSetting,
+  type Diagnostics,
 } from "@/lib/tauri";
 import { CATEGORIES } from "../popup/ritual/copy";
 
@@ -19,11 +22,14 @@ import { CATEGORIES } from "../popup/ritual/copy";
 export function SettingsView() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [pausedUntil, setPausedUntil] = useState<number | null>(null);
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
+  const [repair, setRepair] = useState<string | null>(null);
 
   async function refresh() {
     const pairs = await getSettings();
     setValues(Object.fromEntries(pairs));
     setPausedUntil(await pauseStatus());
+    setDiagnostics(await getDiagnostics().catch(() => null));
   }
 
   useEffect(() => {
@@ -128,8 +134,72 @@ export function SettingsView() {
         />
       </Section>
 
+      <Section
+        title="Setup"
+        note="Whether this installation can actually do its job. Blocking needs a helper registered with administrator rights, and the triggers need scheduled tasks pointing at this build."
+      >
+        {diagnostics ? (
+          <div className="flex flex-col gap-2">
+            {diagnostics.checks.map((check) => (
+              <div
+                key={check.name}
+                className="flex items-baseline gap-3 rounded-lg border border-[var(--color-border-subtle)] px-3 py-2 text-sm"
+              >
+                <span
+                  className={
+                    check.ok
+                      ? "text-[var(--color-accent)]"
+                      : "text-[var(--color-ink)]"
+                  }
+                >
+                  {check.ok ? "OK" : "!"}
+                </span>
+                <span className="w-48 shrink-0">{check.name}</span>
+                <span className="flex-1 text-xs break-all text-[var(--color-ink-muted)]">
+                  {check.detail}
+                </span>
+              </div>
+            ))}
+
+            {diagnostics.needsRepair && (
+              <div className="mt-2 flex flex-col gap-3 rounded-xl border border-[var(--color-accent)]/50 bg-[var(--color-accent)]/[0.08] p-4">
+                <p className="text-sm">
+                  Blocking cannot work until the helper is registered. This needs
+                  administrator rights once.
+                </p>
+                <div className="flex items-center gap-3">
+                  <Button
+                    onClick={async () => {
+                      setRepair("Waiting for administrator rights…");
+                      try {
+                        await repairHelper();
+                        setRepair("Done — blocking is ready.");
+                      } catch (err) {
+                        setRepair(
+                          err instanceof Error ? err.message : String(err),
+                        );
+                      }
+                      await refresh();
+                    }}
+                  >
+                    Repair
+                  </Button>
+                  {repair && (
+                    <span className="text-xs text-[var(--color-ink-muted)]">
+                      {repair}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--color-ink-muted)]">Checking…</p>
+        )}
+      </Section>
+
       <Section title="Browsers" note="">
-        <p className="text-sm text-[var(--color-ink-muted)]">
+        <p className="max-w-prose text-sm text-[var(--color-ink-muted)]">
           While a block is armed your browsers will say they are “managed by
           your organization”. That is Threshold turning off DNS-over-HTTPS —
           without it, blocking silently does nothing. It is removed the moment

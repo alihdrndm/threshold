@@ -10,23 +10,62 @@ pub fn ping() -> String {
     "Core responded.".to_string()
 }
 
-/// Record what the user did and close the ritual.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RitualResult {
+    pub id: i64,
+    /// Present when the session asked for sites to be blocked. `blocked: false`
+    /// carries a reason the confirmation screen shows, because telling someone
+    /// their sites are blocked when they are not is worse than not blocking.
+    pub block: Option<crate::session::BlockOutcome>,
+}
+
+/// Record what the user did, arm any block they committed to, then close.
 ///
-/// Writing happens before the window closes so that a crash between the two
-/// loses the window rather than the record.
+/// The record is written first so that a failure further along loses the block,
+/// never the answer. Arming happens before the window closes so the outcome can
+/// still be shown on the confirmation screen.
 #[tauri::command]
 pub fn finish_ritual(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     intention: intentions::NewIntention,
-) -> Result<i64, String> {
+) -> Result<RitualResult, String> {
     let id = {
         let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
         intentions::insert(&conn, &intention)?
     };
 
-    crate::popup::close(&app).map_err(|err| err.to_string())?;
-    Ok(id)
+    let categories: Vec<String> = intention
+        .categories
+        .as_deref()
+        .unwrap_or_default()
+        .split(',')
+        .filter(|c| !c.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    let block = match (categories.is_empty(), intention.duration_min) {
+        (false, Some(minutes)) if minutes > 0 => {
+            let outcome = crate::session::arm(&categories, minutes);
+            if outcome.blocked {
+                // Tell the debounce a session is running so the ritual does not
+                // reappear on the next wake in the middle of one.
+                crate::triggers::note_session(minutes);
+            }
+            Some(outcome)
+        }
+        _ => None,
+    };
+
+    // A failed block keeps the window open so the reason is read rather than
+    // flashing past on the way out.
+    let keep_open = block.as_ref().is_some_and(|outcome| !outcome.blocked);
+    if !keep_open {
+        crate::popup::close(&app).map_err(|err| err.to_string())?;
+    }
+
+    Ok(RitualResult { id, block })
 }
 
 /// Chips offered on the intention step.
@@ -89,11 +128,55 @@ pub fn set_task_status(db: State<'_, Db>, id: i64, status: String) -> Result<(),
     tasks::set_status(&conn, id, &status)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FocusResult {
+    pub opened: bool,
+    /// Why nothing happened, when nothing happened. Previously this command
+    /// returned Ok(()) whether or not it did anything, so a paused app made the
+    /// button look broken.
+    pub reason: Option<String>,
+}
+
 /// Start a focus session from a task, without waiting for a boot or wake.
+///
+/// Takes the task so the ritual can open with that intention already filled in
+/// — otherwise "Focus on this" is indistinguishable from "open the ritual".
 #[tauri::command]
-pub fn focus_on_task(app: tauri::AppHandle) -> Result<(), String> {
-    crate::request_ritual(&app);
-    Ok(())
+pub fn focus_on_task(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    task_id: i64,
+) -> Result<FocusResult, String> {
+    let title = {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        tasks::title_of(&conn, task_id)?
+    };
+
+    match crate::triggers::request_with_intent(&app, title) {
+        Ok(()) => Ok(FocusResult {
+            opened: true,
+            reason: None,
+        }),
+        Err(reason) => Ok(FocusResult {
+            opened: false,
+            reason: Some(reason),
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn diagnostics() -> crate::diagnostics::Diagnostics {
+    crate::diagnostics::diagnostics()
+}
+
+/// Re-register the elevated helper, prompting for administrator rights.
+///
+/// The one repair the user cannot perform from inside the app, surfaced as a
+/// button rather than left as a command-line incantation.
+#[tauri::command]
+pub fn repair_helper() -> Result<(), String> {
+    crate::elevate_register_helper()
 }
 
 #[tauri::command]

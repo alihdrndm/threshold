@@ -31,8 +31,27 @@ pub enum SystemEvent {
 }
 
 pub fn init(app: AppHandle) {
-    *STATE.lock().expect("trigger state poisoned") = Some(TriggerState::default());
+    // Honour the configured lock threshold. It was persisted by the settings
+    // panel and then never read, so changing it silently did nothing.
+    let threshold = read_lock_threshold(&app);
+    *STATE.lock().expect("trigger state poisoned") =
+        Some(TriggerState::with_lock_threshold(threshold));
     message_window::spawn(app);
+}
+
+fn read_lock_threshold(app: &AppHandle) -> std::time::Duration {
+    use tauri::Manager;
+    let minutes = app
+        .try_state::<crate::db::Db>()
+        .and_then(|db| {
+            db.0.lock().ok().and_then(|conn| {
+                crate::db::get_setting(&conn, "unlock_threshold_min")
+                    .and_then(|raw| raw.parse::<u64>().ok())
+            })
+        })
+        .filter(|minutes| *minutes > 0)
+        .unwrap_or(20);
+    std::time::Duration::from_secs(minutes * 60)
 }
 
 fn handle_system_event(app: &AppHandle, event: SystemEvent) {
@@ -48,6 +67,31 @@ fn handle_system_event(app: &AppHandle, event: SystemEvent) {
     };
 
     request(app, kind);
+}
+
+/// Open the ritual for a specific task, reporting why if it cannot.
+///
+/// Returns the reason rather than swallowing it, so "Focus on this" can explain
+/// itself instead of looking broken.
+pub fn request_with_intent(app: &AppHandle, intent: String) -> Result<(), String> {
+    if is_paused(app) {
+        return Err("Threshold is paused. Resume it in Settings to start a session.".into());
+    }
+
+    let now = Instant::now();
+    match with_state(|state| state.evaluate(TriggerKind::Manual, now)).unwrap_or(Decision::Show) {
+        Decision::Show => {
+            with_state(|state| state.mark_shown(now));
+            crate::popup::show_with_intent(app, TriggerKind::Manual, Some(intent))
+                .map_err(|err| format!("could not open the ritual: {err}"))
+        }
+        Decision::SessionInProgress => Err(
+            "A focus session is already running. It will end on its own, or use the tray to \
+             unlock early."
+                .into(),
+        ),
+        other => Err(format!("not right now ({other:?})")),
+    }
 }
 
 /// The single funnel every trigger passes through, so the debounce rules cannot
@@ -75,6 +119,20 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
             println!("triggers: {kind:?} suppressed ({other:?})");
         }
     }
+}
+
+/// Record that a focus session is running, so the ritual does not interrupt one.
+///
+/// Previously `start_session` existed but was never called, which meant a wake
+/// mid-session re-prompted as if nothing were underway.
+pub fn note_session(duration_min: i64) {
+    let until = Instant::now() + std::time::Duration::from_secs((duration_min.max(0) * 60) as u64);
+    with_state(|state| state.start_session(until));
+}
+
+/// A commitment has ended, so triggers may prompt again.
+pub fn clear_session() {
+    with_state(|state| state.end_session());
 }
 
 fn is_paused(app: &AppHandle) -> bool {

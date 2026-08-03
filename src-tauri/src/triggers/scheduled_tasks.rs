@@ -16,6 +16,7 @@
 //! handling. Tasks that point at a development build have a habit of outliving
 //! the build.
 
+use std::path::PathBuf;
 use std::process::Command;
 
 #[cfg(windows)]
@@ -142,15 +143,33 @@ fn unlock_trigger(user: &str) -> String {
     )
 }
 
-/// Power-Troubleshooter event ID 1 is written by the kernel after every resume,
-/// including the Modern Standby wakes that never produce a clean
-/// `WM_POWERBROADCAST`.
+/// Resume events, from two providers because one is not enough.
+///
+/// Power-Troubleshooter ID 1 is the classic resume record, but a Modern Standby
+/// (S0) machine does not write it — this was the actual reason wake never fired
+/// here. S0 resumes come through Kernel-Power 507 (resume from connected
+/// standby) and 107 instead. Subscribing to all three means whichever the
+/// machine emits, the app comes back; the debounce collapses any duplicates.
 fn resume_trigger() -> String {
-    r#"    <EventTrigger>
+    let query = "*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]";
+    let kernel = "*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] \
+                  and (EventID=507 or EventID=107)]]";
+    format!(
+        r#"    <EventTrigger>
       <Enabled>true</Enabled>
-      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
-    </EventTrigger>"#
-        .to_string()
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;{}&lt;/Select&gt;&lt;Select Path="System"&gt;{}&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+    </EventTrigger>"#,
+        xml_escape(query),
+        xml_escape(kernel)
+    )
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\'', "&apos;")
 }
 
 fn register_one(name: &str, xml: String) -> Result<(), String> {
@@ -223,11 +242,77 @@ fn helper_task_xml(exe: &str, user: &str) -> String {
     )
 }
 
+/// Where the helper lives: beside this executable, as bundled.
+pub fn helper_path() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("threshold-helper.exe")))
+        .unwrap_or_else(|| PathBuf::from("threshold-helper.exe"))
+}
+
 /// Register the elevated helper task. Requires administrator rights; this is
 /// the install-time UAC prompt.
 pub fn register_helper(helper_exe: &str) -> Result<(), String> {
+    // schtasks accepts a target that does not exist, and the failure only
+    // surfaces later as "blocking silently does nothing" — which is exactly how
+    // this shipped broken. Refuse up front instead.
+    if !std::path::Path::new(helper_exe).is_file() {
+        return Err(format!("no helper binary at {helper_exe}"));
+    }
     let user = current_user()?;
     register_one(HELPER_TASK, helper_task_xml(helper_exe, &user))
+}
+
+/// True when the helper task exists *and* points at a binary that is present.
+///
+/// A task aimed at a deleted file reports as registered and does nothing, so
+/// both halves have to be checked for the answer to mean anything.
+pub fn helper_usable() -> bool {
+    if !helper_registered() {
+        return false;
+    }
+    match helper_task_target() {
+        Some(path) => std::path::Path::new(path.trim_matches('"')).is_file(),
+        None => false,
+    }
+}
+
+pub fn helper_task_target() -> Option<String> {
+    schtasks(&["/query", "/tn", HELPER_TASK, "/fo", "LIST", "/v"])
+        .ok()
+        .and_then(|out| {
+            out.lines()
+                .find(|line| line.trim_start().starts_with("Task To Run:"))
+                .and_then(|line| line.split_once(':'))
+                .map(|(_, value)| value.trim().to_string())
+        })
+}
+
+/// Register the relaunch tasks when they are missing, or aimed at a different
+/// executable.
+///
+/// Called on every start. Without it, a fresh install has no triggers at all,
+/// and a reinstall leaves tasks pointing at wherever the app used to live —
+/// which looks exactly like the triggers being broken.
+pub fn ensure_registered() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let exe = exe.to_string_lossy().to_lowercase();
+
+    let stale = registered_targets().into_iter().any(|(_, target)| match target {
+        None => true,
+        Some(path) => !path.to_lowercase().contains(exe.trim_end_matches(".exe")),
+    });
+
+    if !stale {
+        return;
+    }
+
+    match register_all() {
+        Ok(names) => println!("tasks: registered {} against this build", names.join(", ")),
+        Err(err) => eprintln!("tasks: could not register: {err}"),
+    }
 }
 
 pub fn unregister_helper() -> Result<(), String> {

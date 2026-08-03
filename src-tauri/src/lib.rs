@@ -1,7 +1,9 @@
 mod commands;
 mod db;
+mod diagnostics;
 mod pause;
 mod popup;
+mod session;
 mod startup;
 mod tray;
 mod triggers;
@@ -50,6 +52,8 @@ pub fn run() {
             commands::resume_now,
             commands::get_settings,
             commands::set_setting,
+            commands::diagnostics,
+            commands::repair_helper,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -60,8 +64,20 @@ pub fn run() {
             app.manage(db::Db(Mutex::new(conn)));
 
             startup::sync_autostart(&handle);
+
+            // Register the relaunch tasks if they are missing or aimed at a
+            // different build. Without this a fresh install has no triggers at
+            // all, which is precisely how "I slept the machine and nothing
+            // happened" occurred.
+            scheduled_tasks::ensure_registered();
+
             tray::create_tray(&handle)?;
             triggers::init(handle.clone());
+
+            // A commitment that ran out while the app was closed must still be
+            // lifted, so this watches the lock rather than a timer held in the
+            // memory of whichever run armed it.
+            session::spawn_expiry_watcher(handle.clone());
 
             // Launched by the logon task or the autostart entry: this *is* the
             // boot moment, so ask for the ritual straight away.
@@ -145,11 +161,9 @@ pub fn handle_task_cli(args: &[String]) -> bool {
             .split_once('=')
             .map(|(_, path)| path.to_string())
             .unwrap_or_else(|| {
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|exe| exe.parent().map(|dir| dir.join("threshold-helper.exe")))
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default()
+                scheduled_tasks::helper_path()
+                    .to_string_lossy()
+                    .to_string()
             });
         match scheduled_tasks::register_helper(&helper) {
             Ok(()) => println!("registered {} -> {helper}", scheduled_tasks::HELPER_TASK),
@@ -170,6 +184,22 @@ pub fn handle_task_cli(args: &[String]) -> bool {
         match scheduled_tasks::run_helper() {
             Ok(()) => println!("helper task started"),
             Err(err) => eprintln!("could not start the helper task: {err}"),
+        }
+        return true;
+    }
+
+    // One place that says whether this installation can actually do its job.
+    // Every failure the user hit was silent; this makes them all visible.
+    if args.iter().any(|a| a == "--doctor") {
+        println!("{}", diagnostics::diagnostics().report());
+        return true;
+    }
+
+    // Escape hatch for a hosts file left blocked with no lock to justify it.
+    if args.iter().any(|a| a == "--unblock-now") {
+        match session::lift() {
+            Ok(()) => println!("unblocked"),
+            Err(err) => eprintln!("could not unblock: {err}"),
         }
         return true;
     }
@@ -239,4 +269,44 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
 
 pub(crate) fn request_ritual(app: &tauri::AppHandle) {
     triggers::request(app, TriggerKind::Manual);
+}
+
+/// Re-run helper registration with administrator rights.
+///
+/// Registering a "run with highest privileges" task itself requires elevation,
+/// so this is the one action the app cannot complete on its own. `runas` raises
+/// the standard UAC prompt; if the user declines, nothing changes.
+pub(crate) fn elevate_register_helper() -> Result<(), String> {
+    let exe = std::env::current_exe()
+        .map_err(|err| format!("could not resolve own path: {err}"))?;
+    let helper = scheduled_tasks::helper_path();
+    if !helper.is_file() {
+        return Err(format!(
+            "the helper binary is missing at {}. Reinstalling Threshold will restore it.",
+            helper.display()
+        ));
+    }
+
+    let status = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &format!(
+                "Start-Process -FilePath '{}' -ArgumentList '--register-helper={}' -Verb RunAs -Wait",
+                exe.display(),
+                helper.display()
+            ),
+        ])
+        .status()
+        .map_err(|err| format!("could not request administrator rights: {err}"))?;
+
+    if !status.success() {
+        return Err("administrator rights were declined".into());
+    }
+    if !scheduled_tasks::helper_usable() {
+        return Err("registration did not take effect".into());
+    }
+    Ok(())
 }

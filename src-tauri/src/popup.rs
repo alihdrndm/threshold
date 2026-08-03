@@ -15,6 +15,15 @@ use crate::triggers::TriggerKind;
 pub const POPUP_LABEL: &str = "popup";
 
 pub fn show(app: &AppHandle, kind: TriggerKind) -> tauri::Result<()> {
+    show_with_intent(app, kind, None)
+}
+
+/// Open the ritual, optionally with the intention already chosen.
+pub fn show_with_intent(
+    app: &AppHandle,
+    kind: TriggerKind,
+    intent: Option<String>,
+) -> tauri::Result<()> {
     // Already open: bring it forward rather than stacking a second ritual.
     if let Some(existing) = app.get_webview_window(POPUP_LABEL) {
         existing.show()?;
@@ -29,11 +38,20 @@ pub fn show(app: &AppHandle, kind: TriggerKind) -> tauri::Result<()> {
         .map(|id| format!("&theme={id}"))
         .unwrap_or_default();
 
+    let intent_param = intent
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!("&intent={}", urlencode(&value)))
+        .unwrap_or_default();
+
     let window = WebviewWindowBuilder::new(
         app,
         POPUP_LABEL,
         WebviewUrl::App(
-            format!("index.html?trigger={}{forced_theme}", kind_slug(kind)).into(),
+            format!(
+                "index.html?trigger={}{forced_theme}{intent_param}",
+                kind_slug(kind)
+            )
+            .into(),
         ),
     )
     .title("Threshold")
@@ -59,6 +77,20 @@ pub fn close(app: &AppHandle) -> tauri::Result<()> {
         window.close()?;
     }
     Ok(())
+}
+
+/// Percent-encode anything that would break out of a query parameter. Task
+/// titles are user text and will contain spaces, ampersands and quotes.
+fn urlencode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
 }
 
 fn kind_slug(kind: TriggerKind) -> &'static str {

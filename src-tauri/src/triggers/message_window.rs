@@ -27,11 +27,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use super::{handle_system_event, SystemEvent};
 
-/// Resume from suspend *with a user present*. The automatic variant
-/// (`PBT_APMRESUMEAUTOMATIC`, 0x12) fires when the machine wakes itself for
-/// maintenance with nobody there — prompting then would train the user to
-/// dismiss the ritual without reading it.
+/// Resume from suspend with a user present.
 const PBT_APMRESUMESUSPEND: u32 = 0x0007;
+
+/// Resume that the system initiated. On a Modern Standby (S0) machine this is
+/// frequently the *only* resume notification delivered, so ignoring it — as
+/// this originally did — means never noticing a wake on exactly the hardware
+/// most people now own.
+///
+/// The reason for ignoring it was sound: it also fires when the machine wakes
+/// itself for maintenance with nobody there, and prompting an empty room trains
+/// the user to dismiss the ritual unread. So it is accepted, but only when a
+/// console session is actually attached and unlocked (see `user_is_present`).
+const PBT_APMRESUMEAUTOMATIC: u32 = 0x0012;
 
 const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
 const WTS_SESSION_LOCK: u32 = 0x7;
@@ -118,8 +126,13 @@ unsafe extern "system" fn wndproc(
 ) -> LRESULT {
     match msg {
         WM_POWERBROADCAST => {
-            if wparam.0 as u32 == PBT_APMRESUMESUSPEND {
-                dispatch(SystemEvent::Resumed);
+            match wparam.0 as u32 {
+                PBT_APMRESUMESUSPEND => dispatch(SystemEvent::Resumed),
+                // Only when somebody is actually there to read it.
+                PBT_APMRESUMEAUTOMATIC if user_is_present() => {
+                    dispatch(SystemEvent::Resumed)
+                }
+                _ => {}
             }
             // TRUE: the message was handled.
             LRESULT(1)
@@ -138,6 +151,20 @@ unsafe extern "system" fn wndproc(
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
+}
+
+/// Is there a real, attached console session?
+///
+/// `WTSGetActiveConsoleSessionId` returns `0xFFFFFFFF` when no session is
+/// attached — the machine woke to do maintenance and nobody is looking at it.
+/// Distinguishing that from a person opening the lid is the difference between
+/// a useful interruption and one that teaches the user to dismiss on reflex.
+fn user_is_present() -> bool {
+    // SAFETY: no arguments, no allocation; returns a session id or 0xFFFFFFFF.
+    let session = unsafe {
+        windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId()
+    };
+    session != u32::MAX
 }
 
 fn dispatch(event: SystemEvent) {
