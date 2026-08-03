@@ -2,8 +2,9 @@ import { useState } from "react";
 import clsx from "clsx";
 import { TasksView } from "./tasks/TasksView";
 import { OverviewView } from "./OverviewView";
+import { SettingsView } from "./SettingsView";
 
-type Tab = "overview" | "tasks";
+type Tab = "overview" | "tasks" | "settings";
 
 /**
  * One window, two tabs. Keeping the dashboard and the list in the same WebView
@@ -17,7 +18,7 @@ export function DashboardWindow() {
     <div className="flex h-full flex-col bg-[var(--color-surface)]">
       <nav className="flex items-center gap-1 border-b border-[var(--color-border-subtle)] px-8 py-3">
         <h1 className="mr-4 text-sm font-medium tracking-tight">Threshold</h1>
-        {(["overview", "tasks"] as const).map((option) => (
+        {(["overview", "tasks", "settings"] as const).map((option) => (
           <button
             key={option}
             type="button"
@@ -35,7 +36,9 @@ export function DashboardWindow() {
       </nav>
 
       <div className="min-h-0 flex-1">
-        {tab === "overview" ? <OverviewView /> : <TasksView />}
+        {tab === "overview" && <OverviewView />}
+        {tab === "tasks" && <TasksView />}
+        {tab === "settings" && <SettingsView />}
       </div>
     </div>
   );

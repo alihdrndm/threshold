@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod pause;
 mod popup;
 mod startup;
 mod tray;
@@ -44,6 +45,11 @@ pub fn run() {
             commands::move_task,
             commands::set_task_status,
             commands::focus_on_task,
+            commands::pause_status,
+            commands::pause_for,
+            commands::resume_now,
+            commands::get_settings,
+            commands::set_setting,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -180,11 +186,36 @@ pub fn handle_task_cli(args: &[String]) -> bool {
     false
 }
 
+/// Show the dashboard, creating it the first time it is asked for.
+///
+/// Created on demand rather than declared in the config: a declared window
+/// starts a WebView2 instance at launch - six processes and several hundred
+/// megabytes - for a window that spends most days unopened. Threshold is
+/// supposed to sit in the tray costing almost nothing.
 pub(crate) fn show_main(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        return;
+    }
+
+    let built = tauri::WebviewWindowBuilder::new(
+        app,
+        "main",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("Threshold")
+    .inner_size(1180.0, 780.0)
+    .min_inner_size(880.0, 600.0)
+    .center()
+    .build();
+
+    match built {
+        Ok(window) => {
+            let _ = window.set_focus();
+        }
+        Err(err) => eprintln!("could not open the dashboard: {err}"),
     }
 }
 

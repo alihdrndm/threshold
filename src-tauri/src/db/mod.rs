@@ -118,6 +118,17 @@ pub fn get_setting(conn: &Connection, key: &str) -> Option<String> {
     .ok()
 }
 
+pub fn all_settings(conn: &Connection) -> Result<Vec<(String, String)>, String> {
+    let mut stmt = conn
+        .prepare("SELECT key, value FROM settings ORDER BY key")
+        .map_err(|err| format!("could not read settings: {err}"))?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|err| format!("could not read settings: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("could not read settings: {err}"))
+}
+
 pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
     conn.execute(
         "INSERT INTO settings(key, value) VALUES(?1, ?2)

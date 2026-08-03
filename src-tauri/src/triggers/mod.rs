@@ -53,6 +53,13 @@ fn handle_system_event(app: &AppHandle, event: SystemEvent) {
 /// The single funnel every trigger passes through, so the debounce rules cannot
 /// be bypassed by adding a new caller.
 pub fn request(app: &AppHandle, kind: TriggerKind) {
+    // A pause means paused. Interrupting someone who explicitly asked for a
+    // break is how a tool earns an uninstall rather than a return.
+    if is_paused(app) {
+        println!("triggers: {kind:?} skipped (paused)");
+        return;
+    }
+
     let now = Instant::now();
     let decision = with_state(|state| state.evaluate(kind, now)).unwrap_or(Decision::Show);
 
@@ -68,6 +75,17 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
             println!("triggers: {kind:?} suppressed ({other:?})");
         }
     }
+}
+
+fn is_paused(app: &AppHandle) -> bool {
+    use tauri::Manager;
+    app.try_state::<crate::db::Db>()
+        .and_then(|db| {
+            db.0.lock()
+                .ok()
+                .map(|conn| crate::pause::paused_until(&conn).is_some())
+        })
+        .unwrap_or(false)
 }
 
 fn with_state<T>(f: impl FnOnce(&mut TriggerState) -> T) -> Option<T> {
