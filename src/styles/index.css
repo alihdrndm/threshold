@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/* Semantic tokens. Phase 3 adds the rotating popup themes as
+   [data-theme="..."] blocks that override these same variables — that is why
+   nothing below references a raw colour outside this file. */
+@theme {
+  --color-surface: #0b0c0e;
+  --color-surface-raised: #141619;
+  --color-border-subtle: #ffffff14;
+  --color-ink: #e8e9eb;
+  --color-ink-muted: #8b8f96;
+  --color-accent: #6b8afd;
+
+  /* Motion. Spec §6: nothing over 400ms, enter animations ease-out. */
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --duration-enter: 300ms;
+  --duration-exit: 180ms;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  font-family:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The popup is not a document — nothing in this app should be selectable or
+   right-click-menued like one. */
+* {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
