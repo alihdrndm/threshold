@@ -82,33 +82,69 @@ export function MatrixView({
   onToggleDone: (task: Task) => void;
   onFocus: (task: Task) => void;
 }) {
+  // Completed tasks leave the grid entirely (spec F6). Leaving them in place
+  // with only a strikethrough made ticking the box look like nothing happened.
+  const open = tasks.filter((t) => t.status !== "done");
+  const done = tasks.filter((t) => t.status === "done");
+
   const inQuadrant = (q: Quadrant) =>
-    tasks.filter((t) =>
+    open.filter((t) =>
       q.urgent === null
         ? t.urgent === null || t.important === null
         : t.urgent === q.urgent && t.important === q.important,
     );
 
   return (
-    <div className="flex gap-4">
-      <Zone
-        quadrant={INBOX}
-        tasks={inQuadrant(INBOX)}
-        onToggleDone={onToggleDone}
-        onFocus={onFocus}
-        className="w-56 shrink-0"
-      />
-      <div className="grid flex-1 grid-cols-2 gap-4">
-        {QUADRANTS.map((quadrant) => (
-          <Zone
-            key={quadrant.id}
-            quadrant={quadrant}
-            tasks={inQuadrant(quadrant)}
-            onToggleDone={onToggleDone}
-            onFocus={onFocus}
-          />
+    <div className="flex flex-col gap-4">
+      <div className="flex gap-4">
+        <Zone
+          quadrant={INBOX}
+          tasks={inQuadrant(INBOX)}
+          onToggleDone={onToggleDone}
+          onFocus={onFocus}
+          className="w-56 shrink-0"
+        />
+        <div className="grid flex-1 grid-cols-2 gap-4">
+          {QUADRANTS.map((quadrant) => (
+            <Zone
+              key={quadrant.id}
+              quadrant={quadrant}
+              tasks={inQuadrant(quadrant)}
+              onToggleDone={onToggleDone}
+              onFocus={onFocus}
+            />
+          ))}
+        </div>
+      </div>
+
+      <DoneToday tasks={done} onToggleDone={onToggleDone} />
+    </div>
+  );
+}
+
+/**
+ * A checkmark is the reward. No confetti, no "Amazing!" — celebrating is what
+ * licenses the scroll that follows.
+ */
+export function DoneToday({
+  tasks,
+  onToggleDone,
+}: {
+  tasks: Task[];
+  onToggleDone: (task: Task) => void;
+}) {
+  if (tasks.length === 0) return null;
+
+  return (
+    <section className="flex flex-col gap-2 rounded-2xl border border-[var(--color-border-subtle)] p-4">
+      <h3 className="text-sm font-medium text-[var(--color-ink-muted)]">
+        Done today · {tasks.length}
+      </h3>
+      <div className="flex flex-col gap-2">
+        {tasks.map((task) => (
+          <TaskCard key={task.id} task={task} onToggleDone={onToggleDone} />
         ))}
       </div>
-    </div>
+    </section>
   );
 }

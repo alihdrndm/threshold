@@ -95,3 +95,15 @@ fn update_tooltip(app: &AppHandle, text: &str) {
         let _ = tray.set_tooltip(Some(text));
     }
 }
+
+/// Show how long a running commitment has left, so the tray answers "am I
+/// blocked, and until when?" without opening anything.
+pub fn set_status(app: &AppHandle, seconds_remaining: Option<i64>) {
+    match seconds_remaining {
+        Some(seconds) if seconds > 0 => {
+            let minutes = (seconds + 59) / 60;
+            update_tooltip(app, &format!("Threshold - {minutes} min left"));
+        }
+        _ => update_tooltip(app, "Threshold"),
+    }
+}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence } from "motion/react";
 import {
+  dismissPopup,
   finishRitual,
   intentionSuggestions,
   rememberCategories,
@@ -42,8 +43,16 @@ export function Ritual({ trigger }: { trigger: string }) {
     return themeById(forced) ?? themeFor(now);
   }, [now]);
 
-  const [step, setStep] = useState<StepId>("arrival");
-  const [text, setText] = useState("");
+  // "Focus on this" passes the task through, so the ritual opens already
+  // knowing what you picked instead of asking again.
+  const presetIntent = useMemo(
+    () => new URLSearchParams(window.location.search).get("intent") ?? "",
+    [],
+  );
+
+  const [step, setStep] = useState<StepId>(presetIntent ? "prediction" : "arrival");
+  const [text, setText] = useState(presetIntent);
+  const [blockProblem, setBlockProblem] = useState<string | null>(null);
   const [predictedYes, setPredictedYes] = useState<boolean | null>(null);
   const [ifThen, setIfThen] = useState<string>(IF_THEN_DEFAULTS[0]);
   const [customIfThen, setCustomIfThen] = useState("");
@@ -77,9 +86,12 @@ export function Ritual({ trigger }: { trigger: string }) {
     const joined = categories.join(",");
     await rememberCategories(joined).catch(() => {});
     setStep("confirm");
-    // The confirmation is read, not clicked past.
-    setTimeout(() => {
-      void finishRitual({
+
+    // Arming happens here, not on a timer after the window has gone: if the
+    // block cannot be applied the user has to be told, on this screen, rather
+    // than being assured their sites are blocked when they are not.
+    try {
+      const result = await finishRitual({
         text: text.trim() || null,
         ifThen: customIfThen.trim() || ifThen,
         predictedYes,
@@ -88,7 +100,12 @@ export function Ritual({ trigger }: { trigger: string }) {
         trigger,
         outcome: "completed",
       });
-    }, 2200);
+      if (result.block && !result.block.blocked) {
+        setBlockProblem(result.block.reason ?? "The sites were not blocked.");
+      }
+    } catch (err) {
+      setBlockProblem(err instanceof Error ? err.message : String(err));
+    }
   }
 
   /** Honourable exit: one binary question, no blocks, no guilt, then gone. */
@@ -295,6 +312,18 @@ export function Ritual({ trigger }: { trigger: string }) {
                 scroll that follows it. */}
             <Question>Intention set.</Question>
             {text.trim() && <Hint>First action: {text.trim()}</Hint>}
+
+            {/* Saying nothing here is what made blocking look like it worked
+                when it had never run at all. */}
+            {blockProblem && (
+              <div className="mt-2 flex flex-col items-center gap-4 rounded-2xl border border-[var(--color-accent)]/50 bg-[var(--color-accent)]/[0.08] px-6 py-4">
+                <p className="max-w-md text-center text-sm text-[var(--color-ink)]">
+                  Your intention was saved, but the sites are <strong>not</strong>{" "}
+                  blocked. {blockProblem}
+                </p>
+                <Pill onClick={() => void dismissPopup()}>Continue anyway</Pill>
+              </div>
+            )}
           </Step>
         )}
 

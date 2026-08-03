@@ -65,23 +65,27 @@ export function TaskCard({
       </button>
 
       {/* The whole body is the drag handle: grabbing a task anywhere but the
-          checkbox should move it. */}
+          buttons should move it. `min-w-0` lets it actually shrink — without it
+          `truncate` gives the span its full text width, which pushes the Focus
+          button out past the edge of the card on long titles. */}
       <span
         {...attributes}
         {...listeners}
         className={clsx(
-          "flex-1 cursor-grab truncate active:cursor-grabbing",
+          "min-w-0 flex-1 cursor-grab truncate active:cursor-grabbing",
           done && "line-through",
         )}
       >
         {task.title}
       </span>
 
+      {/* Always visible rather than revealed on hover: a control you cannot see
+          is a control most people never find. */}
       {onFocus && !done && (
         <button
           type="button"
           onClick={() => onFocus(task)}
-          className="rounded-full border border-[var(--color-border-subtle)] px-2.5 py-1 text-xs text-[var(--color-ink-muted)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:text-[var(--color-ink)] focus-visible:opacity-100"
+          className="ritual-pressable shrink-0 rounded-full border border-[var(--color-border-subtle)] px-2.5 py-1 text-xs text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]"
         >
           Focus
         </button>

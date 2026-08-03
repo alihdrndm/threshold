@@ -24,7 +24,7 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "resources": ["../target/release/threshold-helper.exe"],
+    "resources": { "resources/threshold-helper.exe": "threshold-helper.exe" },
     "windows": {
       "nsis": {
         "installMode": "perMachine",

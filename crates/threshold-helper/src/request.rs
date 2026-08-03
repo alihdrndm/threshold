@@ -7,34 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
-pub const PROGRAM_DATA: &str = r"C:\ProgramData\Threshold";
-pub const REQUEST_FILE: &str = "request.json";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Action {
-    Block,
-    Unblock,
-    /// Deliberately available, deliberately costly. Users who defeat a tool via
-    /// workarounds abandon self-regulation wholesale, so an official exit is
-    /// safer than one they have to invent.
-    EmergencyUnblock,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Request {
-    pub action: Action,
-    #[serde(default)]
-    pub categories: Vec<String>,
-    /// Unix seconds. Required for `block`, meaningless otherwise.
-    #[serde(default)]
-    pub until: Option<i64>,
-    /// Compute and report the changes without applying any of them.
-    #[serde(default)]
-    pub dry_run: bool,
-}
+// The wire types are shared with the app: they cross a process boundary that is
+// also a privilege boundary, and two private copies cannot be kept in step.
+pub use threshold_protocol::{Action, Request};
 
 #[derive(Debug)]
 pub enum RequestError {
@@ -56,7 +31,7 @@ impl std::fmt::Display for RequestError {
 }
 
 pub fn program_data() -> PathBuf {
-    PathBuf::from(PROGRAM_DATA)
+    threshold_protocol::program_data()
 }
 
 /// Admin-only subdirectory holding the lock.
@@ -66,11 +41,11 @@ pub fn program_data() -> PathBuf {
 /// simply shorten your own commitment, and the whole mechanism would be
 /// decorative.
 pub fn state_dir() -> PathBuf {
-    program_data().join("state")
+    threshold_protocol::state_dir()
 }
 
 pub fn request_path() -> PathBuf {
-    program_data().join(REQUEST_FILE)
+    threshold_protocol::request_path()
 }
 
 pub fn load(path: &Path) -> Result<Request, RequestError> {
@@ -91,41 +66,13 @@ pub fn load(path: &Path) -> Result<Request, RequestError> {
 
 /// Reject anything that does not describe a coherent action, rather than
 /// guessing at intent while holding administrator rights.
+///
+/// The rules live in the shared protocol crate so the side that writes requests
+/// is held to the same standard as the side that reads them. This still runs on
+/// receipt regardless: the helper holds administrator rights and trusts nobody,
+/// including a caller that claims to have validated already.
 pub fn validate(request: &Request) -> Result<(), RequestError> {
-    if request.action == Action::Block {
-        match request.until {
-            None => {
-                return Err(RequestError::Invalid(
-                    "a block must say when it ends".into(),
-                ))
-            }
-            Some(until) if until <= 0 => {
-                return Err(RequestError::Invalid("block end is not a valid time".into()))
-            }
-            _ => {}
-        }
-
-        if request.categories.is_empty() {
-            return Err(RequestError::Invalid(
-                "a block must name at least one category".into(),
-            ));
-        }
-    }
-
-    // Category names index a fixed table; anything else is a typo or an attempt
-    // to smuggle something through.
-    for category in &request.categories {
-        if !category
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c == '-')
-        {
-            return Err(RequestError::Invalid(format!(
-                "unrecognised category name: {category}"
-            )));
-        }
-    }
-
-    Ok(())
+    threshold_protocol::validate(request).map_err(RequestError::Invalid)
 }
 
 #[cfg(test)]

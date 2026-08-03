@@ -149,6 +149,13 @@ pub fn set_status(conn: &Connection, id: i64, status: &str) -> Result<(), String
     .map_err(|err| format!("could not update task: {err}"))
 }
 
+pub fn title_of(conn: &Connection, id: i64) -> Result<String, String> {
+    conn.query_row("SELECT title FROM tasks WHERE id = ?1", [id], |row| {
+        row.get::<_, String>(0)
+    })
+    .map_err(|_| format!("no task with id {id}"))
+}
+
 /// Titles from the "Do First" quadrant, for the ritual's one-click chips.
 ///
 /// This is the point of the whole feature: at the vulnerable moment you are

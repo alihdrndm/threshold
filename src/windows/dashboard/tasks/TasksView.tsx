@@ -26,9 +26,9 @@ import {
   type Task,
   type TaskContext,
 } from "@/lib/tauri";
-import { MatrixView } from "./MatrixView";
+import { DoneToday, MatrixView } from "./MatrixView";
 import { TaskCard } from "./TaskCard";
-import { quadrantById, type QuadrantId } from "./quadrants";
+import { quadrantById, quadrantOf, type QuadrantId } from "./quadrants";
 
 type View = "list" | "matrix";
 
@@ -39,6 +39,7 @@ export function TasksView() {
   const [contextFilter, setContextFilter] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [dragging, setDragging] = useState<Task | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Pointer needs a small activation distance, or a click on the done checkbox
   // registers as a micro-drag and never fires. Keyboard is not an afterthought:
@@ -69,6 +70,16 @@ export function TasksView() {
     [tasks, contextFilter],
   );
 
+  /// Every action reports its own failure. Previously each was fired with
+  /// `void`, so a rejected invoke vanished with no console line and no visible
+  /// change — which is what "the checkbox does nothing" actually looked like.
+  function run(action: () => Promise<void>) {
+    setError(null);
+    action().catch((err: unknown) =>
+      setError(err instanceof Error ? err.message : String(err)),
+    );
+  }
+
   async function submitDraft() {
     const title = draft.trim();
     if (!title) return;
@@ -78,13 +89,20 @@ export function TasksView() {
   }
 
   async function toggleDone(task: Task) {
-    await setTaskStatus(task.id, task.status === "done" ? "open" : "done");
+    const next = task.status === "done" ? "open" : "done";
+    // Optimistic: ticking a box should feel instant, not wait on SQLite.
+    setTasks((current) =>
+      current.map((t) => (t.id === task.id ? { ...t, status: next } : t)),
+    );
+    await setTaskStatus(task.id, next);
     await refresh();
   }
 
   async function focus(task: Task) {
-    await setTaskStatus(task.id, task.status);
-    await focusOnTask();
+    const result = await focusOnTask(task.id);
+    if (!result.opened) {
+      setError(result.reason ?? "The ritual could not be opened.");
+    }
   }
 
   function onDragStart(event: DragStartEvent) {
@@ -100,9 +118,7 @@ export function TasksView() {
     // means "the quadrant that card is in".
     const overId = String(over.id);
     const target = tasks.find((t) => String(t.id) === overId);
-    const quadrantId = (target
-      ? quadrantOfTask(target)
-      : overId) as QuadrantId;
+    const quadrantId = (target ? quadrantOf(target) : overId) as QuadrantId;
 
     const quadrant = quadrantById(quadrantId);
     const moved = tasks.find((t) => t.id === active.id);
@@ -149,31 +165,38 @@ export function TasksView() {
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter") void submitDraft();
+          if (event.key === "Enter") run(() => submitDraft());
         }}
         placeholder="Add a task"
         className="ritual-field w-full rounded-full border border-[var(--color-border-subtle)] bg-white/[0.03] px-5 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)]/60 focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
       />
 
+      {error && (
+        <p className="rounded-xl border border-[var(--color-accent)]/50 bg-[var(--color-accent)]/[0.08] px-4 py-2.5 text-sm text-[var(--color-ink)]">
+          {error}
+        </p>
+      )}
+
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
         onDragStart={onDragStart}
+        onDragCancel={() => setDragging(null)}
         onDragEnd={onDragEnd}
       >
         <div className="min-h-0 flex-1 overflow-auto">
           {view === "matrix" ? (
             <MatrixView
               tasks={visible}
-              onToggleDone={(t) => void toggleDone(t)}
-              onFocus={(t) => void focus(t)}
+              onToggleDone={(t) => run(() => toggleDone(t))}
+              onFocus={(t) => run(() => focus(t))}
             />
           ) : (
             <ListView
               tasks={visible}
               contexts={contexts}
-              onToggleDone={(t) => void toggleDone(t)}
-              onFocus={(t) => void focus(t)}
+              onToggleDone={(t) => run(() => toggleDone(t))}
+              onFocus={(t) => run(() => focus(t))}
             />
           )}
         </div>
@@ -192,14 +215,6 @@ export function TasksView() {
   );
 }
 
-function quadrantOfTask(task: Task): QuadrantId {
-  if (task.urgent === null || task.important === null) return "inbox";
-  if (task.urgent && task.important) return "do-first";
-  if (!task.urgent && task.important) return "schedule";
-  if (task.urgent && !task.important) return "delegate";
-  return "eliminate";
-}
-
 function ListView({
   tasks,
   contexts,
@@ -211,20 +226,23 @@ function ListView({
   onToggleDone: (task: Task) => void;
   onFocus: (task: Task) => void;
 }) {
+  const open = tasks.filter((t) => t.status !== "done");
+  const done = tasks.filter((t) => t.status === "done");
+
   const groups = [
     ...contexts.map((context) => ({
       key: String(context.id),
       name: context.name,
-      items: tasks.filter((t) => t.contextId === context.id),
+      items: open.filter((t) => t.contextId === context.id),
     })),
     {
       key: "none",
       name: "No context",
-      items: tasks.filter((t) => t.contextId === null),
+      items: open.filter((t) => t.contextId === null),
     },
   ].filter((group) => group.items.length > 0);
 
-  if (groups.length === 0) {
+  if (groups.length === 0 && done.length === 0) {
     return (
       <p className="text-sm text-[var(--color-ink-muted)]">
         Nothing on the list yet.
@@ -254,6 +272,7 @@ function ListView({
           </SortableContext>
         </section>
       ))}
+      <DoneToday tasks={done} onToggleDone={onToggleDone} />
     </div>
   );
 }

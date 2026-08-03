@@ -52,9 +52,20 @@ export function appVersion(): Promise<string> {
   return getVersion();
 }
 
-/** Record the outcome and close the ritual. Every path through the popup ends here. */
-export function finishRitual(intention: NewIntention): Promise<number> {
-  return invoke<number>("finish_ritual", { intention: toRust(intention) });
+export interface BlockOutcome {
+  blocked: boolean;
+  reason: string | null;
+}
+
+export interface RitualResult {
+  id: number;
+  /** Present only when the session asked for sites to be blocked. */
+  block: BlockOutcome | null;
+}
+
+/** Record the outcome, arm any block, and close. Every path through the popup ends here. */
+export function finishRitual(intention: NewIntention): Promise<RitualResult> {
+  return invoke<RitualResult>("finish_ritual", { intention: toRust(intention) });
 }
 
 /** Close the intention window. The honourable exit must never be more than this. */
@@ -130,8 +141,34 @@ export function setTaskStatus(id: number, status: string): Promise<void> {
   return invoke<void>("set_task_status", { id, status });
 }
 
-export function focusOnTask(): Promise<void> {
-  return invoke<void>("focus_on_task");
+export interface FocusResult {
+  opened: boolean;
+  reason: string | null;
+}
+
+export function focusOnTask(taskId: number): Promise<FocusResult> {
+  return invoke<FocusResult>("focus_on_task", { taskId });
+}
+
+export interface DiagnosticCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface Diagnostics {
+  checks: DiagnosticCheck[];
+  healthy: boolean;
+  needsRepair: boolean;
+}
+
+export function getDiagnostics(): Promise<Diagnostics> {
+  return invoke<Diagnostics>("diagnostics");
+}
+
+/** Re-register the elevated helper. Raises a UAC prompt. */
+export function repairHelper(): Promise<void> {
+  return invoke<void>("repair_helper");
 }
 
 /** Unix seconds a pause runs until, or null when nothing is paused. */

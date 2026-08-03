@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/threshold-helper"]
+members = ["src-tauri", "crates/threshold-helper", "crates/threshold-protocol"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
