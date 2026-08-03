@@ -17,6 +17,7 @@ tauri-plugin-autostart = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_RemoteDesktop", "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_Graphics_Gdi"] }
 
 # Deferred deliberately:
 #   Phase 1 — windows crate (Win32_UI_WindowsAndMessaging, Win32_System_RemoteDesktop,
