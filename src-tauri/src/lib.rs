@@ -1,6 +1,6 @@
 mod commands;
 mod db;
-mod diagnostics;
+pub mod diagnostics;
 mod pause;
 mod popup;
 mod session;
