@@ -38,6 +38,12 @@ pub fn run() {
             commands::remember_categories,
             commands::data_location,
             commands::open_dashboard,
+            commands::list_contexts,
+            commands::list_tasks,
+            commands::add_task,
+            commands::move_task,
+            commands::set_task_status,
+            commands::focus_on_task,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

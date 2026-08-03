@@ -14,8 +14,10 @@
       {
         "label": "main",
         "title": "Threshold",
-        "width": 900,
-        "height": 640,
+        "width": 1180,
+        "height": 780,
+        "minWidth": 880,
+        "minHeight": 600,
         "center": true,
         "visible": false,
         "decorations": true
