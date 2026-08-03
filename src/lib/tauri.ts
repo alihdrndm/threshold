@@ -82,6 +82,58 @@ export function dataLocation(): Promise<string> {
   return invoke<string>("data_location");
 }
 
+export interface TaskContext {
+  id: number;
+  name: string;
+  sortOrder: number;
+}
+
+export interface Task {
+  id: number;
+  title: string;
+  note: string | null;
+  contextId: number | null;
+  /** Both null means the Inbox: not yet classified. */
+  urgent: boolean | null;
+  important: boolean | null;
+  sortOrder: number;
+  status: "open" | "done" | "archived" | "deleted";
+  createdTs: string;
+  completedTs: string | null;
+}
+
+export function listContexts(): Promise<TaskContext[]> {
+  return invoke<TaskContext[]>("list_contexts");
+}
+
+export function listTasks(): Promise<Task[]> {
+  return invoke<Task[]>("list_tasks");
+}
+
+export function addTask(
+  title: string,
+  contextId: number | null,
+): Promise<number> {
+  return invoke<number>("add_task", { task: { title, note: null, contextId } });
+}
+
+export function moveTask(
+  id: number,
+  urgent: boolean | null,
+  important: boolean | null,
+  sortOrder: number,
+): Promise<void> {
+  return invoke<void>("move_task", { id, urgent, important, sortOrder });
+}
+
+export function setTaskStatus(id: number, status: string): Promise<void> {
+  return invoke<void>("set_task_status", { id, status });
+}
+
+export function focusOnTask(): Promise<void> {
+  return invoke<void>("focus_on_task");
+}
+
 /** True when running inside the Tauri webview rather than a plain browser. */
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

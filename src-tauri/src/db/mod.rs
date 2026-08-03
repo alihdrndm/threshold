@@ -6,6 +6,7 @@
 //! when no webview is alive.
 
 pub mod intentions;
+pub mod tasks;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -67,6 +68,39 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             "#,
         )
         .map_err(|err| format!("migration 1 failed: {err}"))?;
+    }
+
+    if version < 2 {
+        // Contexts are data, not code: they are seeded, then renamed and added
+        // to from settings.
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS contexts(
+                id INTEGER PRIMARY KEY,
+                name TEXT UNIQUE,
+                sort_order INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS tasks(
+                id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                note TEXT,
+                context_id INTEGER REFERENCES contexts(id),
+                urgent INTEGER,
+                important INTEGER,
+                sort_order INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'open'
+                    CHECK(status IN ('open','done','archived','deleted')),
+                created_ts TEXT,
+                completed_ts TEXT
+            );
+            ALTER TABLE intentions ADD COLUMN task_id INTEGER REFERENCES tasks(id);
+            INSERT OR IGNORE INTO contexts(name, sort_order) VALUES
+                ('Job', 0), ('Personal', 1), ('Side', 2);
+            CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+            PRAGMA user_version = 2;
+            "#,
+        )
+        .map_err(|err| format!("migration 2 failed: {err}"))?;
     }
 
     Ok(())
