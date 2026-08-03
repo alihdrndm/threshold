@@ -143,6 +143,14 @@ pub fn spawn_expiry_watcher(app: tauri::AppHandle) {
     std::thread::Builder::new()
         .name("threshold-expiry".into())
         .spawn(move || loop {
+            // A pause outranks a countdown in the tooltip: it is the state that
+            // explains why nothing is happening.
+            if let Some(until) = crate::pause::paused_until_for(&app) {
+                crate::tray::set_paused(&app, until);
+                std::thread::sleep(EXPIRY_POLL);
+                continue;
+            }
+
             match active_lock() {
                 Some(lock) if seconds_remaining(&lock) == 0 => {
                     match lift() {
