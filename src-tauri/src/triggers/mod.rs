@@ -82,8 +82,10 @@ pub fn request_with_intent(app: &AppHandle, intent: String) -> Result<(), String
     match with_state(|state| state.evaluate(TriggerKind::Manual, now)).unwrap_or(Decision::Show) {
         Decision::Show => {
             with_state(|state| state.mark_shown(now));
-            crate::popup::show_with_intent(app, TriggerKind::Manual, Some(intent))
-                .map_err(|err| format!("could not open the ritual: {err}"))
+            crate::popup::show_with_intent(app, TriggerKind::Manual, Some(intent)).map_err(|err| {
+                with_state(|state| state.forget_last_shown());
+                format!("could not open the ritual: {err}")
+            })
         }
         Decision::SessionInProgress => Err(
             "A focus session is already running. It will end on its own, or use the tray to \
@@ -109,9 +111,17 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
 
     match decision {
         Decision::Show => {
-            with_state(|state| state.mark_shown(now));
+            // Record it as shown only if it genuinely reached the screen. A
+            // trigger that arrives while the session is locked cannot display
+            // anything; marking it shown anyway meant the unlock that followed
+            // was dismissed as too soon, and the user saw nothing at all.
+            // The kind is recorded too: an unlock straight after a wake is the
+            // same return to the machine, and the wake's ritual was built
+            // behind the lock screen where nobody could see it.
+            with_state(|state| state.mark_shown_for(kind, now));
             if let Err(err) = crate::popup::show(app, kind) {
                 eprintln!("triggers: could not open the ritual: {err}");
+                with_state(|state| state.forget_last_shown());
             }
         }
         other => {
@@ -133,6 +143,15 @@ pub fn note_session(duration_min: i64) {
 /// A commitment has ended, so triggers may prompt again.
 pub fn clear_session() {
     with_state(|state| state.end_session());
+}
+
+/// Forget that a ritual was shown, because it never actually appeared.
+///
+/// Called by the popup watchdog. Without it, a ritual that failed to display
+/// still consumed the debounce window, so the unlock that followed a locked-
+/// screen wake was dismissed as too soon and nothing was ever seen.
+pub fn forget_last_shown() {
+    with_state(|state| state.forget_last_shown());
 }
 
 fn is_paused(app: &AppHandle) -> bool {
@@ -158,6 +177,11 @@ pub fn kind_from_args(args: &[String]) -> Option<TriggerKind> {
         "--trigger=boot" | "--autostart" => Some(TriggerKind::Boot),
         "--trigger=wake" => Some(TriggerKind::Wake),
         "--trigger=unlock" => Some(TriggerKind::Unlock),
+        // Open the ritual now, the same as the tray item. Useful for support -
+        // "does it appear at all?" is a different question from "does the
+        // trigger fire?", and separating them is how the stale-window bug was
+        // finally pinned down.
+        "--ritual" => Some(TriggerKind::Manual),
         _ => None,
     })
 }
