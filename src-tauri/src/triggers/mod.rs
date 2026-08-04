@@ -102,7 +102,7 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
     // A pause means paused. Interrupting someone who explicitly asked for a
     // break is how a tool earns an uninstall rather than a return.
     if is_paused(app) {
-        println!("triggers: {kind:?} skipped (paused)");
+        crate::log::line(&format!("{kind:?}: skipped, Threshold is paused"));
         return;
     }
 
@@ -119,14 +119,24 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
             // same return to the machine, and the wake's ritual was built
             // behind the lock screen where nobody could see it.
             with_state(|state| state.mark_shown_for(kind, now));
+            crate::log::line(&format!("{kind:?}: opening the ritual"));
             if let Err(err) = crate::popup::show(app, kind) {
-                eprintln!("triggers: could not open the ritual: {err}");
+                crate::log::line(&format!("{kind:?}: could not open the ritual: {err}"));
                 with_state(|state| state.forget_last_shown());
             }
         }
-        other => {
-            // Phase 2 turns SessionInProgress into a small "X min left" toast.
-            println!("triggers: {kind:?} suppressed ({other:?})");
+        // Each of these is correct behaviour, and each one previously looked
+        // exactly like the app being broken.
+        Decision::TooSoon => crate::log::line(&format!(
+            "{kind:?}: suppressed, a ritual was shown less than {} minutes ago",
+            debounce::MIN_GAP.as_secs() / 60
+        )),
+        Decision::NotAwayLongEnough => crate::log::line(&format!(
+            "{kind:?}: suppressed, the screen was not locked long enough to count as returning \
+             (see Settings)"
+        )),
+        Decision::SessionInProgress => {
+            crate::log::line(&format!("{kind:?}: suppressed, a focus session is running"))
         }
     }
 }
