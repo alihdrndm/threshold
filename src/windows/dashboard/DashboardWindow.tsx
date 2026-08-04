@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { pauseStatus, resumeNow } from "@/lib/tauri";
+import { useAppearance } from "@/appearance/useAppearance";
 import { TasksView } from "./tasks/TasksView";
 import { OverviewView } from "./OverviewView";
 import { SettingsView } from "./SettingsView";
@@ -13,7 +14,10 @@ type Tab = "overview" | "tasks" | "settings";
  * whole app is supposed to sit near-invisibly in the tray all day.
  */
 export function DashboardWindow() {
-  const [tab, setTab] = useState<Tab>("overview");
+  // Tasks first: the list is what you came to change, whereas the overview is
+  // something you read occasionally.
+  const [tab, setTab] = useState<Tab>("tasks");
+  const { appearance, setAppearance } = useAppearance();
   const [pausedUntil, setPausedUntil] = useState<number | null>(null);
 
   // Re-checked when the window opens and whenever a tab changes, so resuming
@@ -36,7 +40,7 @@ export function DashboardWindow() {
             className={clsx(
               "rounded-full px-4 py-1.5 text-sm capitalize transition-colors duration-150",
               tab === option
-                ? "bg-white/10 text-[var(--color-ink)]"
+                ? "bg-[var(--color-fill-selected)] text-[var(--color-ink)]"
                 : "text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
             )}
           >
@@ -69,7 +73,12 @@ export function DashboardWindow() {
       <div className="min-h-0 flex-1">
         {tab === "overview" && <OverviewView />}
         {tab === "tasks" && <TasksView />}
-        {tab === "settings" && <SettingsView />}
+        {tab === "settings" && (
+          <SettingsView
+            appearance={appearance}
+            onAppearanceChange={setAppearance}
+          />
+        )}
       </div>
     </div>
   );

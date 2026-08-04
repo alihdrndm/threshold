@@ -11,6 +11,7 @@ import {
   type Diagnostics,
 } from "@/lib/tauri";
 import { CATEGORIES } from "../popup/ritual/copy";
+import type { Appearance } from "@/appearance";
 
 /**
  * Settings (spec F5).
@@ -19,7 +20,13 @@ import { CATEGORIES } from "../popup/ritual/copy";
  * keep - imposed ones get around 25% compliance and breed workarounds - so the
  * categories, the thresholds and the pause are all yours to change.
  */
-export function SettingsView() {
+export function SettingsView({
+  appearance,
+  onAppearanceChange,
+}: {
+  appearance: Appearance;
+  onAppearanceChange: (next: Appearance) => void;
+}) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [pausedUntil, setPausedUntil] = useState<number | null>(null);
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
@@ -132,6 +139,38 @@ export function SettingsView() {
           value={values.min_gap_min ?? "15"}
           onChange={(v) => void update("min_gap_min", v)}
         />
+      </Section>
+
+      <Section
+        title="Appearance"
+        note="Light, dark, or whatever Windows is doing. The ritual stays dark either way — a white fullscreen window at boot is not a kindness, and its daily rotation is dark by design."
+      >
+        <div
+          role="radiogroup"
+          aria-label="Appearance"
+          className="flex flex-wrap gap-2"
+        >
+          {(["system", "light", "dark"] as const).map((option) => {
+            const on = appearance === option;
+            return (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                onClick={() => onAppearanceChange(option)}
+                className={clsx(
+                  "ritual-pressable rounded-full border px-4 py-2 text-sm capitalize",
+                  on
+                    ? "border-[var(--color-accent)] text-[var(--color-ink)]"
+                    : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
+                )}
+              >
+                {option}
+              </button>
+            );
+          })}
+        </div>
       </Section>
 
       <Section
@@ -270,7 +309,7 @@ function Number({
         max={240}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="ritual-field w-24 rounded-full border border-[var(--color-border-subtle)] bg-white/[0.03] px-4 py-1.5 text-center outline-none focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+        className="ritual-field w-24 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-1.5 text-center outline-none focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
       />
     </label>
   );

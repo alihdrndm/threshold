@@ -1,10 +1,14 @@
 @import "tailwindcss";
 
-/* Semantic tokens. The rotating popup themes override these same variables, so
+/* Semantic tokens. Two independent axes override these: the dashboard's
+   appearance (light) and the ritual's daily rotation ([data-theme]). Dark is
+   the base rather than a mode, so there is no `dark:` variant anywhere —
    nothing outside this file ever references a raw colour. */
 @theme {
   --color-surface: #0b0c0e;
   --color-surface-raised: #141619;
+  --color-fill-subtle: #ffffff08;
+  --color-fill-selected: #ffffff1a;
   --color-border-subtle: #ffffff14;
   --color-ink: #e8e9eb;
   --color-ink-muted: #8b8f96;
@@ -15,6 +19,14 @@
      watching most closely. */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+/* Native chrome — scrollbars, the range track, number spinners, the caret —
+   takes its cue from here. Declaring nothing is why the dark dashboard has been
+   drawing light scrollbars. */
+:root {
+  color-scheme: dark;
+  --glow: rgba(107, 138, 253, 0.2);
 }
 
 html,
@@ -43,6 +55,84 @@ input,
 textarea {
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* ---------------------------------------------------------------------------
+   Appearance — the dashboard axis
+
+   Written to <html data-appearance> by the bootstrap in index.html, before the
+   first paint. The ritual window is never given this attribute.
+
+   Light is not an inversion. The ratios are matched to the dark palette rather
+   than the colours, so the type hierarchy reads identically in both: ink lands
+   at 16.5:1 against dark's 16.1:1, muted ink at 5.98:1 against 6.02:1. Porting
+   a dark palette by flipping its values is what makes light modes look
+   unfinished.
+   --------------------------------------------------------------------------- */
+
+:root[data-appearance="light"] {
+  color-scheme: light;
+
+  /* Not #fff. The page has to sit below white so a raised surface has somewhere
+     to go, and a full sheet of pure white is not calm. Fractionally warm, so it
+     reads as paper rather than as a blown-out panel. */
+  --color-surface: #f7f7f5;
+  --color-surface-raised: #ffffff;
+
+  /* A subtle fill is lighter than the page in both schemes. "Selected" means
+     further from the page, which on light means downward. */
+  --color-fill-subtle: #ffffff;
+  --color-fill-selected: #e4e6ea;
+
+  /* White-alpha vanishes here. 15% black is the perceptual match for the 8%
+     white used on near-black; the eye reads additions to darkness far more
+     readily than subtractions from light. */
+  --color-border-subtle: #00000026;
+
+  --color-ink: #17181b; /* 16.5:1 */
+  --color-ink-muted: #5a5f68; /* 5.98:1 */
+
+  /* #6b8afd is only 2.9:1 here, and the accent is used as text, not just as a
+     border. Same blue, carrying its own weight. */
+  --color-accent: #4258d8; /* 5.41:1 */
+}
+
+/* Antialiasing thins glyphs. That reads as crisp for light-on-dark and as
+   washed-out for dark-on-light — the exact problem it exists to avoid. */
+:root[data-appearance="light"] body {
+  -webkit-font-smoothing: auto;
+}
+
+/* Switching schemes must not animate. Roughly half these surfaces carry a
+   colour transition and half do not, so a cross-fade arrives as a stagger that
+   reads as a rendering fault rather than a choice. */
+:root[data-appearance-switching] * {
+  transition: none !important;
+}
+
+/* ---------------------------------------------------------------------------
+   The ritual is dark. Always.
+
+   A white fullscreen window at boot or wake would be hostile, and the four
+   rotating palettes are deliberately dark for the anti-habituation effect. This
+   reset makes that structural rather than a promise: any document carrying a
+   rotating theme returns to the dark palette wholesale, so the appearance axis
+   cannot reach it even if both attributes somehow landed on one document.
+
+   Order matters. :root[data-theme] and :root[data-theme="ash"] have identical
+   specificity, so this must stay above the four blocks below or it erases them.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme] {
+  color-scheme: dark;
+  --color-surface: #0b0c0e;
+  --color-surface-raised: #141619;
+  --color-fill-subtle: #ffffff08;
+  --color-fill-selected: #ffffff1a;
+  --color-border-subtle: #ffffff14;
+  --color-ink: #e8e9eb;
+  --color-ink-muted: #8b8f96;
+  --color-accent: #6b8afd;
 }
 
 /* ---------------------------------------------------------------------------
@@ -76,11 +166,6 @@ textarea {
   --color-surface: #0c0a0f;
   --color-accent: #a98bf0;
   --glow: rgba(169, 139, 240, 0.18);
-}
-
-/* Fallback so the popup is never unstyled if a theme id goes missing. */
-:root {
-  --glow: rgba(107, 138, 253, 0.2);
 }
 
 /* The luminous centre that gives this design its name. Purely decorative, so
@@ -184,6 +269,173 @@ textarea {
   transition:
     background-color 160ms ease,
     border-color 160ms ease;
+}
+
+/* ---------------------------------------------------------------------------
+   The Eisenhower matrix
+
+   One rule generates every fill: a zone's prominence is its distance from the
+   page — upward in lightness on dark, downward on light. Hue carries identity,
+   distance carries priority, and the ordering is the same in both schemes, so
+   the board reads identically at a glance whichever appearance is active.
+
+   Nothing here exceeds about 8% saturation. These are washes, not colour
+   blocks. Nothing is red: Do First uses amber, which pulls the eye at the same
+   rate without the alarm semantics that teach people to stop seeing it.
+
+   Twelve literals. Borders, card fills and drag states are all derived from
+   them, so there is one place to tune.
+   --------------------------------------------------------------------------- */
+
+:root {
+  --zone-do-first: #2a1f16; /* warm amber — pulls the eye */
+  --zone-schedule: #14211f; /* green-teal — the calm, valuable one */
+  --zone-delegate: #1e1a26; /* violet — other people's noise */
+  --zone-inbox: #17191c; /* achromatic-cool — neutral holding */
+  --zone-eliminate: #131417; /* achromatic — recedes */
+  --zone-done: #121316; /* quietest thing on the page */
+
+  /* Brighter than --color-ink-muted, because a card derived from a zone sits
+     above the page: the base muted ink measures only 3.93:1 on a Do First card,
+     which would be a regression on today's 5.72:1. */
+  --zone-ink-muted: #9ba0a8;
+
+  /* Fallback for cards rendered outside a zone (the list view). */
+  --zone-fill: var(--color-surface);
+  --zone-bg: var(--color-surface);
+}
+
+:root[data-appearance="light"] {
+  --zone-do-first: #f8e5cd;
+  --zone-schedule: #dfeeea;
+  --zone-delegate: #eeeaf8;
+  --zone-inbox: #ecedf1;
+  --zone-eliminate: #f1f1f2;
+  --zone-done: #f4f4f5;
+  --zone-ink-muted: #565a61;
+}
+
+[data-zone="do-first"] {
+  --zone-fill: var(--zone-do-first);
+}
+[data-zone="schedule"] {
+  --zone-fill: var(--zone-schedule);
+}
+[data-zone="delegate"] {
+  --zone-fill: var(--zone-delegate);
+}
+[data-zone="inbox"] {
+  --zone-fill: var(--zone-inbox);
+}
+[data-zone="eliminate"] {
+  --zone-fill: var(--zone-eliminate);
+}
+[data-zone="done"] {
+  --zone-fill: var(--zone-done);
+}
+
+.matrix-zone {
+  --zone-bg: var(--zone-fill);
+  background-color: var(--zone-bg);
+  border-color: color-mix(in srgb, #ffffff 13%, var(--zone-fill));
+  box-shadow: 0 0 0 0 transparent;
+  /* Split per the rule above: a tint change wants plain ease, the drag ring is
+     feedback and gets the strong curve. transition-colors would not cover
+     box-shadow, which is why this lives here rather than in a utility. */
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms var(--ease-out);
+}
+
+/* Every appearance override below is wrapped in :where().
+
+   Without it these selectors weigh (0,3,0) and outrank the state rules that
+   follow — `.matrix-zone[data-over]` is only (0,2,0) — so in light mode the
+   drag ring silently reverted to the resting border and dragged/done cards kept
+   their white fill. Appearance is a base-layer concern and must never outrank
+   state; :where() contributes zero specificity, which says exactly that. */
+:where(:root[data-appearance="light"]) .matrix-zone {
+  border-color: color-mix(in srgb, #000000 18%, var(--zone-fill));
+}
+
+/* Drag-over composes with the quadrant rather than replacing it.
+   The lift mixes in the ink colour, not the accent, so the hue survives — an
+   accent wash pulls Do First from warm amber to neutral mauve and the quadrant
+   identity drops out. The hard ring is the real signal: it holds 4.7-6.0:1
+   against every zone in both schemes, which no translucent fill can promise
+   across six different backgrounds. */
+.matrix-zone[data-over] {
+  --zone-bg: color-mix(in srgb, var(--color-ink) 5%, var(--zone-fill));
+  border-color: var(--color-accent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+/* Exit faster than enter, so dragging quickly across the board never leaves two
+   zones looking simultaneously active. */
+.matrix-zone:not([data-over]) {
+  transition-duration: 100ms;
+}
+
+/* Cards derive from whatever surface they sit on, so the card component needs
+   no knowledge of quadrants and still works in the list view via the :root
+   fallback above. */
+.matrix-card {
+  background-color: color-mix(in srgb, #ffffff 6%, var(--zone-bg));
+  border-color: color-mix(in srgb, #ffffff 13%, var(--zone-bg));
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+/* The asymmetry is deliberate. Dark builds surfaces by adding light, so a card
+   greyer than its zone would read as a hole and must be *of* it. Light builds
+   them by removing tint, so white paper on a tinted board is the canonical
+   reading and gives the best text contrast. */
+:where(:root[data-appearance="light"]) .matrix-card {
+  background-color: var(--color-surface-raised);
+  border-color: color-mix(in srgb, #000000 12%, var(--zone-bg));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+
+/* Dragging leaves a slot rather than a ghost. Fading the card to 60% smeared
+   the zone hue through it and read differently on every quadrant. */
+.matrix-card[data-dragging] {
+  background-color: transparent;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  box-shadow: none;
+}
+.matrix-card[data-dragging] > * {
+  opacity: 0;
+}
+
+/* Done is spent, not murky: the card becomes its container and keeps its edge,
+   instead of dimming to a smudge over colour. */
+.matrix-card[data-done] {
+  background-color: transparent;
+  box-shadow: none;
+}
+
+/* A card in transit belongs to the cursor, not to any quadrant — so it stays
+   zone-agnostic, but it has to read as lifted paper rather than a grey slab
+   floating over a coloured board. */
+.matrix-drag-overlay {
+  background-color: #202329;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+  box-shadow:
+    0 12px 28px -8px rgb(0 0 0 / 0.65),
+    0 0 0 1px rgb(0 0 0 / 0.4);
+}
+
+:where(:root[data-appearance="light"]) .matrix-drag-overlay {
+  background-color: var(--color-surface-raised);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  box-shadow:
+    0 10px 24px -6px rgb(0 0 0 / 0.18),
+    0 2px 4px rgb(0 0 0 / 0.06);
 }
 
 /* Touch devices fire hover on tap, so hover motion stays gated. */

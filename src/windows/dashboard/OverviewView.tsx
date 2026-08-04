@@ -63,7 +63,7 @@ export function OverviewView() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search"
-            className="ritual-field rounded-full border border-[var(--color-border-subtle)] bg-white/[0.03] px-4 py-1.5 text-xs outline-none placeholder:text-[var(--color-ink-muted)]/60 focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+            className="ritual-field rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-1.5 text-xs outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
           />
         </div>
 
@@ -120,7 +120,7 @@ function Stat({
   dim?: boolean;
 }) {
   return (
-    <div className="rounded-2xl border border-[var(--color-border-subtle)] bg-white/[0.015] p-4">
+    <div className="rounded-2xl border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] p-4">
       <p className="text-xs tracking-[0.16em] text-[var(--color-ink-muted)] uppercase">
         {label}
       </p>

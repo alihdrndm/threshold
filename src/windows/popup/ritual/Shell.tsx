@@ -98,7 +98,7 @@ export function Pill({
       className={`ritual-pressable rounded-full border px-7 py-3 text-base focus-visible:outline-2 focus-visible:outline-offset-[3px] focus-visible:outline-[var(--color-accent)] ${
         selected
           ? "border-[var(--color-accent)] bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)] text-[var(--color-ink)]"
-          : "border-[var(--color-border-subtle)] bg-white/[0.04] text-[var(--color-ink)]"
+          : "border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] text-[var(--color-ink)]"
       }`}
     >
       {children}
@@ -128,7 +128,7 @@ export function Field({
         if (event.key === "Enter" && onSubmit) onSubmit();
       }}
       placeholder={placeholder}
-      className="ritual-field w-full rounded-full border border-[var(--color-border-subtle)] bg-white/[0.03] px-7 py-4 text-center text-lg text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)]/60 focus:border-[color-mix(in_srgb,var(--color-accent)_65%,transparent)] focus:bg-[color-mix(in_srgb,var(--color-accent)_6%,transparent)]"
+      className="ritual-field w-full rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-7 py-4 text-center text-lg text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_65%,transparent)] focus:bg-[color-mix(in_srgb,var(--color-accent)_6%,transparent)]"
     />
   );
 }

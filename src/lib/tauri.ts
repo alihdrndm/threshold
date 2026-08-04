@@ -172,6 +172,16 @@ export function repairHelper(): Promise<void> {
   return invoke<void>("repair_helper");
 }
 
+/**
+ * Match the native titlebar to the chosen appearance.
+ *
+ * `null` means follow Windows, which also restores the webview's automatic
+ * colour scheme so a "system" preference keeps tracking the OS live.
+ */
+export function setWindowTheme(theme: "light" | "dark" | null): Promise<void> {
+  return invoke<void>("set_window_theme", { theme });
+}
+
 /** Unix seconds a pause runs until, or null when nothing is paused. */
 export function pauseStatus(): Promise<number | null> {
   return invoke<number | null>("pause_status");
