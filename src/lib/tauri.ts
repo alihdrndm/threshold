@@ -173,6 +173,16 @@ export function repairHelper(): Promise<void> {
 }
 
 /**
+ * Lift a block that still has time owed on it.
+ *
+ * The commitment lock fails closed on purpose, so this is the only way out
+ * before the time is up. It is recorded, as a count and nothing more.
+ */
+export function emergencyUnblock(): Promise<void> {
+  return invoke<void>("emergency_unblock");
+}
+
+/**
  * Match the native titlebar to the chosen appearance.
  *
  * `null` means follow Windows, which also restores the webview's automatic

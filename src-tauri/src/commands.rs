@@ -192,6 +192,21 @@ pub fn set_window_theme(app: tauri::AppHandle, theme: Option<String>) {
     });
 }
 
+/// Lift a block that is still owed time, and record that it happened.
+///
+/// `async` because it waits on the elevated helper for up to twelve seconds;
+/// run on the main thread that would freeze every window, including the one
+/// showing the button.
+///
+/// This is the only way out of a commitment before its time, and it exists
+/// because the lock deliberately fails closed. It is not hidden and not
+/// discouraged: the helper records it neutrally as a count, and an escape hatch
+/// people feel judged for using is one they route around instead.
+#[tauri::command(async)]
+pub fn emergency_unblock() -> Result<(), String> {
+    crate::session::emergency_unblock()
+}
+
 /// Re-register the elevated helper, prompting for administrator rights.
 ///
 /// The one repair the user cannot perform from inside the app, surfaced as a

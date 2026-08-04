@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 import {
+  emergencyUnblock,
   getDiagnostics,
   getSettings,
   pauseFor,
@@ -31,6 +32,7 @@ export function SettingsView({
   const [pausedUntil, setPausedUntil] = useState<number | null>(null);
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [repair, setRepair] = useState<string | null>(null);
+  const [unblock, setUnblock] = useState<string | null>(null);
 
   async function refresh() {
     const pairs = await getSettings();
@@ -244,6 +246,36 @@ export function SettingsView({
           without it, blocking silently does nothing. It is removed the moment
           the block lifts.
         </p>
+      </Section>
+
+      {/* Stated plainly rather than buried. A commitment you cannot leave is a
+          trap, and a trap is what people uninstall. Knowing the door is there
+          is most of what makes staying a choice. */}
+      <Section
+        title="If you need out"
+        note="A block holds until its time is up, even against a restart or a changed clock. This ends one early. It is recorded as a count — not a note, not a judgement — because that is the only honest way to keep an exit that people will actually use."
+      >
+        <div className="flex items-center gap-3">
+          <Button
+            onClick={async () => {
+              setUnblock("Asking the helper…");
+              try {
+                await emergencyUnblock();
+                setUnblock("Done — the sites are open again.");
+              } catch (err) {
+                setUnblock(err instanceof Error ? err.message : String(err));
+              }
+              await refresh();
+            }}
+          >
+            End the block now
+          </Button>
+          {unblock && (
+            <span className="text-xs text-[var(--color-ink-muted)]">
+              {unblock}
+            </span>
+          )}
+        </div>
       </Section>
     </div>
   );

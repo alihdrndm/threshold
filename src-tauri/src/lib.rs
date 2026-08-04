@@ -56,6 +56,7 @@ pub fn run() {
             commands::diagnostics,
             commands::repair_helper,
             commands::set_window_theme,
+            commands::emergency_unblock,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -214,9 +215,12 @@ pub fn handle_task_cli(args: &[String]) -> bool {
         return true;
     }
 
-    // Escape hatch for a hosts file left blocked with no lock to justify it.
+    // The escape hatch. Deliberately the emergency path rather than the ordinary
+    // lift: someone typing this has already decided, and an ordinary unblock is
+    // refused for exactly as long as the commitment they are trying to leave.
+    // Being told "unblocked" and staying blocked is how this read before.
     if args.iter().any(|a| a == "--unblock-now") {
-        match session::lift() {
+        match session::emergency_unblock() {
             Ok(()) => println!("unblocked"),
             Err(err) => eprintln!("could not unblock: {err}"),
         }
