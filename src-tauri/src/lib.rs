@@ -1,3 +1,4 @@
+mod checkin;
 mod commands;
 mod db;
 pub mod diagnostics;
@@ -108,7 +109,13 @@ pub fn run() {
         // is the exception - it is meant to be dismissed and rebuilt.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if !window.label().starts_with(popup::POPUP_LABEL) {
+                // The check-in is destroyed rather than hidden, for the same
+                // reason the ritual is: a hidden window of this kind can be
+                // asked to show all day and will not appear, and the next
+                // session would then owe a question with nowhere to ask it.
+                let transient = window.label().starts_with(popup::POPUP_LABEL)
+                    || window.label() == checkin::LABEL;
+                if !transient {
                     api.prevent_close();
                     let _ = window.hide();
                 }

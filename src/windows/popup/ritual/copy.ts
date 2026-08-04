@@ -35,6 +35,24 @@ export const CATEGORIES: BlockCategory[] = [
   { id: "forums", label: "Forums", detail: "reddit" },
 ];
 
+/**
+ * The express screen: one screen, because you already decided.
+ *
+ * The prediction and if-then prompts are deliberately absent here — those come
+ * from the theme, word for word, so the two paths keep measuring the same
+ * thing. A softer express wording would make their data non-comparable.
+ */
+export const EXPRESS = {
+  eyebrow: "Focus",
+  predictYes: "Probably",
+  predictNo: "Probably not",
+  categories: "Quiet these while you work",
+  // Says what pressing it does, and gives one last chance to notice the
+  // duration is wrong.
+  start: (minutes: number) => `Start ${minutes} minutes`,
+  exit: "Not right now",
+} as const;
+
 export function timeLabel(date: Date): string {
   return date.toLocaleString(undefined, {
     weekday: "long",

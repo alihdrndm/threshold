@@ -198,7 +198,7 @@ pub fn forget_last_shown() {
 ///
 /// This replaces guessing with a time window. How long somebody takes to type
 /// their password is not something to estimate.
-fn workstation_locked() -> bool {
+pub(crate) fn workstation_locked() -> bool {
     use windows::Win32::System::StationsAndDesktops::{
         CloseDesktop, OpenInputDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS,
     };

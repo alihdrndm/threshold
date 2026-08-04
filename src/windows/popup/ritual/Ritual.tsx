@@ -12,11 +12,13 @@ import { themeById, themeFor } from "@/themes";
 import {
   CATEGORIES,
   DURATIONS,
+  EXPRESS,
   IF_THEN_DEFAULTS,
   MAX_DURATION,
   MIN_DURATION,
   timeLabel,
 } from "./copy";
+import { ExpressStep } from "./Express";
 import {
   Eyebrow,
   Field,
@@ -29,6 +31,8 @@ import {
 } from "./Shell";
 
 type StepId =
+  /** The one-screen path, reached by clicking Focus on a task. */
+  | "express"
   | "arrival"
   | "intention"
   | "prediction"
@@ -54,11 +58,14 @@ export function Ritual({ trigger }: { trigger: string }) {
       // Number("") is 0 and Number(null) is 0, so a falsy check covers both a
       // missing parameter and a malformed one.
       taskId: Number.isFinite(task) && task > 0 ? task : null,
+      // An explicit mode rather than inferring it from `intent`, which already
+      // means "start at prediction" for a preset boot or wake ritual.
+      express: params.get("mode") === "express",
     };
   }, []);
 
   const [step, setStep] = useState<StepId>(
-    preset.intent ? "prediction" : "arrival",
+    preset.express ? "express" : preset.intent ? "prediction" : "arrival",
   );
   const [text, setText] = useState(preset.intent);
   // Which task the finished record points at. Set by the Focus button, or by
@@ -98,7 +105,12 @@ export function Ritual({ trigger }: { trigger: string }) {
   async function commit() {
     const joined = categories.join(",");
     await rememberCategories(joined).catch(() => {});
-    setStep("confirm");
+
+    // Express does not land on a confirmation screen: the banner in the
+    // dashboard is the confirmation, and a second fullscreen beat after you
+    // have already pressed Start is a delay rather than a ritual. A *failed*
+    // block still shows it, because that must never be swallowed.
+    if (!preset.express) setStep("confirm");
 
     // Arming happens here, not on a timer after the window has gone: if the
     // block cannot be applied the user has to be told, on this screen, rather
@@ -115,9 +127,11 @@ export function Ritual({ trigger }: { trigger: string }) {
         taskId,
       });
       if (result.block && !result.block.blocked) {
+        setStep("confirm");
         setBlockProblem(result.block.reason ?? "The sites were not blocked.");
       }
     } catch (err) {
+      setStep("confirm");
       setBlockProblem(err instanceof Error ? err.message : String(err));
     }
   }
@@ -146,6 +160,24 @@ export function Ritual({ trigger }: { trigger: string }) {
       <Glow />
 
       <AnimatePresence mode="wait">
+        {step === "express" && (
+          <ExpressStep
+            theme={theme}
+            title={text}
+            ifThen={ifThen}
+            onIfThen={setIfThen}
+            customIfThen={customIfThen}
+            onCustomIfThen={setCustomIfThen}
+            predictedYes={predictedYes}
+            onPrediction={setPredictedYes}
+            duration={duration}
+            onDuration={setDuration}
+            categories={categories}
+            onToggleCategory={toggleCategory}
+            onStart={() => void commit()}
+          />
+        )}
+
         {step === "arrival" && (
           <Step stepKey="arrival">
             <div
@@ -367,7 +399,12 @@ export function Ritual({ trigger }: { trigger: string }) {
       </AnimatePresence>
 
       {step !== "confirm" && step !== "browsing" && (
-        <HonourableExit onClick={() => setStep("browsing")} />
+        <HonourableExit
+          onClick={() => setStep("browsing")}
+          // On the express path you arrived by choosing a task, so "just
+          // browsing today" is the wrong shape of sentence for backing out.
+          label={preset.express ? EXPRESS.exit : undefined}
+        />
       )}
     </main>
   );
