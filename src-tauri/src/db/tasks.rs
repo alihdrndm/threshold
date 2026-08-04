@@ -156,6 +156,21 @@ pub fn title_of(conn: &Connection, id: i64) -> Result<String, String> {
     .map_err(|_| format!("no task with id {id}"))
 }
 
+/// Is this task still open?
+///
+/// Asked before offering to tick one off from the check-in: `set_status` on a
+/// deleted task would set it back to 'done', and `open_tasks` includes 'done',
+/// so a forgotten question could resurrect a deleted task into the matrix.
+pub fn is_open(conn: &Connection, id: i64) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT status FROM tasks WHERE id = ?1",
+        [id],
+        |row| row.get::<_, String>(0),
+    )
+    .map(|status| status == "open")
+    .map_err(|err| format!("could not read task {id}: {err}"))
+}
+
 /// The "Do First" quadrant, for the ritual's one-click chips.
 ///
 /// This is the point of the whole feature: at the vulnerable moment you are

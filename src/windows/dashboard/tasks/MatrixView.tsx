@@ -10,12 +10,18 @@ function Zone({
   tasks,
   onToggleDone,
   onFocus,
+  activeTaskId,
+  sessionRunning,
   className,
 }: {
   quadrant: Quadrant;
   tasks: Task[];
   onToggleDone: (task: Task) => void;
   onFocus?: (task: Task) => void;
+  /** The task a session is running on, if any. */
+  activeTaskId?: number | null;
+  /** Whether any session is running — this task's or another's. */
+  sessionRunning?: boolean;
   className?: string;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: quadrant.id });
@@ -56,6 +62,8 @@ function Zone({
               task={task}
               onToggleDone={onToggleDone}
               onFocus={onFocus}
+              active={task.id === activeTaskId}
+              sessionRunning={sessionRunning}
             />
           ))}
         </div>
@@ -87,10 +95,14 @@ export function MatrixView({
   tasks,
   onToggleDone,
   onFocus,
+  activeTaskId,
+  sessionRunning,
 }: {
   tasks: Task[];
   onToggleDone: (task: Task) => void;
   onFocus: (task: Task) => void;
+  activeTaskId: number | null;
+  sessionRunning: boolean;
 }) {
   // Completed tasks leave the grid entirely (spec F6). Leaving them in place
   // with only a strikethrough made ticking the box look like nothing happened.
@@ -112,6 +124,8 @@ export function MatrixView({
           tasks={inQuadrant(INBOX)}
           onToggleDone={onToggleDone}
           onFocus={onFocus}
+          activeTaskId={activeTaskId}
+          sessionRunning={sessionRunning}
           className="w-64 shrink-0"
         />
         {/* auto-rows-fr keeps the 2x2 a true 2x2: with solid fills, rows of
@@ -124,6 +138,8 @@ export function MatrixView({
               tasks={inQuadrant(quadrant)}
               onToggleDone={onToggleDone}
               onFocus={onFocus}
+              activeTaskId={activeTaskId}
+              sessionRunning={sessionRunning}
             />
           ))}
         </div>

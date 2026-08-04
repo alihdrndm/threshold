@@ -115,6 +115,108 @@ fn ask_helper(
     }
 }
 
+/// Tell every window a session has begun.
+///
+/// The first events in this codebase. They are notifications, never the record:
+/// the dashboard re-reads `session_status` on mount and whenever it becomes
+/// visible again, so an event emitted while no window existed costs nothing.
+pub fn announce_started(app: &tauri::AppHandle, session_id: i64) {
+    use tauri::Emitter;
+    let _ = app.emit("session-started", session_id);
+}
+
+/// Tell every window a session is over, and why.
+pub fn announce_ended(app: &tauri::AppHandle, session_id: i64, reason: &str) {
+    use tauri::Emitter;
+    let _ = app.emit(
+        "session-ended",
+        serde_json::json!({ "sessionId": session_id, "reason": reason }),
+    );
+}
+
+/// How long after a session ends it is still worth asking how it went.
+///
+/// Ten minutes. Past that the answer is a reconstruction rather than a report,
+/// and a guessed answer scored against a real prediction is worse than no
+/// answer at all - it is the one input this whole loop exists to collect.
+pub const CHECKIN_GRACE: i64 = 10 * 60;
+
+/// What the world looks like, given a session record and a block lock.
+///
+/// The two are separate systems with separate clocks and separate owners, so
+/// they can disagree. Every way they can is enumerated here rather than
+/// discovered later. Pure, like the helper's `lock::evaluate`, so each case is
+/// a test rather than a claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reconciled {
+    /// Nothing running, nothing owed.
+    Idle,
+    /// A session is counting down. `block_seconds` is what the lock says, when
+    /// there is one - it may differ from the session's own remainder.
+    Running {
+        seconds_remaining: i64,
+        block_seconds: Option<i64>,
+    },
+    /// The session is over and nobody has been asked yet.
+    CheckinDue {
+        late_by: i64,
+        block_seconds: Option<i64>,
+    },
+    /// Over so long ago that asking would be asking someone to guess.
+    TooLate,
+    /// A block with no session behind it: upgraded mid-commitment, or the
+    /// database was replaced. Nothing is invented to fill the gap.
+    BlockOnly { block_seconds: i64 },
+}
+
+pub fn reconcile(
+    session: Option<&crate::db::sessions::SessionRow>,
+    lock: Option<&proto::Lock>,
+    now: i64,
+    grace: i64,
+) -> Reconciled {
+    use crate::db::sessions::State;
+
+    let block_seconds = lock
+        .map(|lock| (lock.locked_until - now).max(0))
+        .filter(|left| *left > 0);
+
+    let Some(session) = session else {
+        return match block_seconds {
+            Some(block_seconds) => Reconciled::BlockOnly { block_seconds },
+            None => Reconciled::Idle,
+        };
+    };
+
+    let left = session.ends_ts - now;
+
+    match session.state {
+        State::Running if left > 0 => Reconciled::Running {
+            seconds_remaining: left,
+            block_seconds,
+        },
+        // Over. Whether the block agrees is a separate question with a separate
+        // answer: the session ends on time even when the helper will not yet
+        // lift, because the commitment is to the task, not to the hosts file.
+        State::Running | State::AwaitingCheckin => {
+            let late_by = (-left).max(0);
+            if late_by <= grace {
+                Reconciled::CheckinDue {
+                    late_by,
+                    block_seconds,
+                }
+            } else {
+                Reconciled::TooLate
+            }
+        }
+        // Already answered or already closed.
+        _ => match block_seconds {
+            Some(block_seconds) => Reconciled::BlockOnly { block_seconds },
+            None => Reconciled::Idle,
+        },
+    }
+}
+
 /// Why a new block may not be armed, if it may not.
 ///
 /// Arming over a commitment that is still running would overwrite the lock with
@@ -236,6 +338,67 @@ pub fn seconds_remaining(lock: &proto::Lock) -> i64 {
     (lock.locked_until - chrono::Utc::now().timestamp()).max(0)
 }
 
+/// Close what finished while the app was shut, and re-arm what did not.
+///
+/// Two distinct jobs, in this order. **Reap**: nothing closes a session row when
+/// the process is killed, so an open row is not evidence that anything is
+/// running — only `ends_ts` is. **Rehydrate**: at most one row can still be
+/// live, and it is re-armed for the time it has left rather than for its full
+/// duration, or the first launch after a week away would suppress the boot
+/// ritual for a session that ended days ago.
+///
+/// Must run after `triggers::init` (which replaces the state wholesale) and
+/// before the boot trigger fires.
+pub fn reconcile_on_startup(app: &tauri::AppHandle) {
+    use crate::db::{sessions, Db};
+    use tauri::Manager;
+
+    let now = chrono::Utc::now().timestamp();
+    let lock = active_lock();
+
+    let Some(state) = app.try_state::<Db>() else {
+        return;
+    };
+    let Ok(conn) = state.0.lock() else {
+        return;
+    };
+
+    let open = sessions::open_sessions(&conn).unwrap_or_default();
+
+    // Everything already over gets closed here, whatever the row still claims.
+    let mut live = None;
+    for row in open {
+        match reconcile(Some(&row), lock.as_ref(), now, CHECKIN_GRACE) {
+            Reconciled::Running { .. } => live = Some(row),
+            Reconciled::CheckinDue { .. } => {
+                let _ = sessions::mark(&conn, row.id, sessions::State::AwaitingCheckin, Some(row.ends_ts));
+                crate::log::line("session: a check-in is owed from before this launch");
+            }
+            _ => {
+                let _ = sessions::mark(&conn, row.id, sessions::State::Lapsed, Some(row.ends_ts));
+                crate::log::line("session: closed one that ran out while the app was shut");
+            }
+        }
+    }
+
+    match (live, lock.as_ref()) {
+        (Some(row), _) => {
+            crate::triggers::note_session_until(row.ends_ts, row.enforced);
+            crate::tray::set_status(app, Some((row.ends_ts - now).max(0)));
+            crate::log::line("session: resumed one that was still running");
+        }
+        // A block with no session behind it: upgraded mid-commitment, or the
+        // database was replaced. Nothing is invented, but the debounce still
+        // learns about it - which is the long-standing defect where restarting
+        // mid-block re-prompted on top of a live commitment.
+        (None, Some(lock)) if seconds_remaining(lock) > 0 => {
+            crate::triggers::note_session_until(lock.locked_until, true);
+            crate::tray::set_status(app, Some(seconds_remaining(lock)));
+        }
+        _ => {}
+    }
+}
+
 /// Watch for the commitment running out, including one that expired while the
 /// app was closed, and keep the tray showing how long is left.
 ///
@@ -256,11 +419,17 @@ pub fn spawn_expiry_watcher(app: tauri::AppHandle) {
             loop {
                 // A pause outranks a countdown in the tooltip: it is the state
                 // that explains why nothing is happening.
-                if let Some(until) = crate::pause::paused_until_for(&app) {
+                //
+                // It does not, however, skip the session work below. A pause
+                // silences future rituals; swallowing the closing question for
+                // a session the user themself started would lose the answer
+                // entirely, and a session cannot even begin while paused.
+                let paused = crate::pause::paused_until_for(&app);
+                if let Some(until) = paused {
                     crate::tray::set_paused(&app, until);
-                    std::thread::sleep(EXPIRY_POLL);
-                    continue;
                 }
+
+                let session_seconds = advance_sessions(&app);
 
                 match active_lock() {
                     Some(lock) if seconds_remaining(&lock) == 0 => {
@@ -294,20 +463,84 @@ pub fn spawn_expiry_watcher(app: tauri::AppHandle) {
                         }
                     }
                     Some(lock) => {
-                        crate::tray::set_status(&app, Some(seconds_remaining(&lock)));
+                        if paused.is_none() {
+                            // The session's own remainder wins when it is the
+                            // longer of the two: a block that outlives its
+                            // session, or the reverse, are both real and the
+                            // tooltip should not claim the shorter one is all
+                            // that is left.
+                            let left = seconds_remaining(&lock).max(session_seconds.unwrap_or(0));
+                            crate::tray::set_status(&app, Some(left));
+                        }
                     }
                     None => {
                         // The lock is gone, so whatever the disagreement was, it
                         // is over. A later commitment starts from a clean slate.
                         refusals = 0;
                         retry_at = None;
-                        crate::tray::set_status(&app, None);
+                        if paused.is_none() {
+                            crate::tray::set_status(&app, session_seconds);
+                        }
                     }
                 }
-                std::thread::sleep(EXPIRY_POLL);
+
+                // Sleep only until the next thing that can happen, so a session
+                // ending is noticed in about a second rather than up to thirty -
+                // and so the 95% of the time nothing is running costs nothing.
+                let wait = session_seconds
+                    .into_iter()
+                    .chain(active_lock().map(|lock| seconds_remaining(&lock)))
+                    .filter(|left| *left > 0)
+                    .min()
+                    .map(|left| Duration::from_secs(left.clamp(1, 30) as u64))
+                    .unwrap_or(EXPIRY_POLL);
+                std::thread::sleep(wait);
             }
         })
         .expect("failed to spawn the expiry watcher");
+}
+
+/// Move any session past its deadline, and report what is still counting down.
+///
+/// Deliberately independent of whether the block could be lifted. The session
+/// is a commitment to a task; the block is enforcement that may outlive it. If
+/// the helper's clock still owes time the sites stay quiet, and the check-in
+/// says so - but the session itself is over on schedule.
+fn advance_sessions(app: &tauri::AppHandle) -> Option<i64> {
+    use crate::db::{sessions, Db};
+    use tauri::Manager;
+
+    let now = chrono::Utc::now().timestamp();
+    let state = app.try_state::<Db>()?;
+    let conn = state.0.lock().ok()?;
+
+    let live = sessions::live(&conn).ok().flatten()?;
+    match reconcile(Some(&live), active_lock().as_ref(), now, CHECKIN_GRACE) {
+        Reconciled::Running {
+            seconds_remaining, ..
+        } => Some(seconds_remaining),
+        Reconciled::CheckinDue { .. } => {
+            let _ = sessions::mark(
+                &conn,
+                live.id,
+                sessions::State::AwaitingCheckin,
+                Some(live.ends_ts),
+            );
+            crate::triggers::clear_session();
+            drop(conn);
+            crate::log::line("session: time is up, the check-in is owed");
+            announce_ended(app, live.id, "expired");
+            None
+        }
+        _ => {
+            let _ = sessions::mark(&conn, live.id, sessions::State::Lapsed, Some(live.ends_ts));
+            crate::triggers::clear_session();
+            drop(conn);
+            crate::log::line("session: ran out with nobody around to ask");
+            announce_ended(app, live.id, "lapsed");
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -355,6 +588,134 @@ mod tests {
             duration_min: 25,
             categories: vec!["social".into()],
         }
+    }
+
+    fn a_row(ends_ts: i64, state: crate::db::sessions::State) -> crate::db::sessions::SessionRow {
+        crate::db::sessions::SessionRow {
+            id: 1,
+            intention_id: 1,
+            task_id: Some(7),
+            task_title: Some("write the report".into()),
+            started_ts: ends_ts - 1_500,
+            ends_ts,
+            duration_min: 25,
+            enforced: false,
+            categories: Some("social".into()),
+            predicted_yes: Some(true),
+            state,
+            ended_ts: None,
+            answered_ts: None,
+            task_done: false,
+        }
+    }
+
+    #[test]
+    fn nothing_anywhere_is_idle() {
+        assert_eq!(reconcile(None, None, 1_000, CHECKIN_GRACE), Reconciled::Idle);
+    }
+
+    #[test]
+    fn a_running_session_reports_its_own_remainder() {
+        let row = a_row(1_600, crate::db::sessions::State::Running);
+        assert_eq!(
+            reconcile(Some(&row), None, 1_000, CHECKIN_GRACE),
+            Reconciled::Running {
+                seconds_remaining: 600,
+                block_seconds: None,
+            }
+        );
+    }
+
+    #[test]
+    fn the_session_and_the_block_are_reported_separately() {
+        // They have different owners and different clocks. Fusing them into one
+        // number means one of the two is a lie.
+        let row = a_row(1_600, crate::db::sessions::State::Running);
+        let lock = lock_ending_at(1_900);
+        assert_eq!(
+            reconcile(Some(&row), Some(&lock), 1_000, CHECKIN_GRACE),
+            Reconciled::Running {
+                seconds_remaining: 600,
+                block_seconds: Some(900),
+            }
+        );
+    }
+
+    #[test]
+    fn a_session_that_just_ended_owes_a_check_in() {
+        let row = a_row(1_000, crate::db::sessions::State::Running);
+        assert_eq!(
+            reconcile(Some(&row), None, 1_060, CHECKIN_GRACE),
+            Reconciled::CheckinDue {
+                late_by: 60,
+                block_seconds: None,
+            }
+        );
+    }
+
+    #[test]
+    fn the_session_ends_even_while_the_block_still_holds() {
+        // The helper may refuse to lift - its monotonic clock still owes time.
+        // The session is a commitment to a task, not to the hosts file, so it
+        // ends on schedule and the check-in says the sites stay quiet a while.
+        let row = a_row(1_000, crate::db::sessions::State::Running);
+        let lock = lock_ending_at(2_000);
+        assert_eq!(
+            reconcile(Some(&row), Some(&lock), 1_060, CHECKIN_GRACE),
+            Reconciled::CheckinDue {
+                late_by: 60,
+                block_seconds: Some(940),
+            }
+        );
+    }
+
+    #[test]
+    fn a_session_that_ended_hours_ago_is_not_worth_asking_about() {
+        // Slept through it. Asking now is asking someone to score a memory, and
+        // the answer would be scored against a real prediction.
+        let row = a_row(1_000, crate::db::sessions::State::Running);
+        assert_eq!(
+            reconcile(Some(&row), None, 1_000 + CHECKIN_GRACE + 1, CHECKIN_GRACE),
+            Reconciled::TooLate
+        );
+    }
+
+    #[test]
+    fn a_lock_with_no_session_invents_nothing() {
+        // Upgraded mid-commitment, or the database was replaced. There is no
+        // task and no prediction to score, so no session is fabricated.
+        let lock = lock_ending_at(1_900);
+        assert_eq!(
+            reconcile(None, Some(&lock), 1_000, CHECKIN_GRACE),
+            Reconciled::BlockOnly {
+                block_seconds: 900
+            }
+        );
+    }
+
+    #[test]
+    fn an_answered_session_is_done_even_if_the_block_outlives_it() {
+        let row = a_row(1_000, crate::db::sessions::State::Completed);
+        let lock = lock_ending_at(1_900);
+        assert_eq!(
+            reconcile(Some(&row), Some(&lock), 1_000, CHECKIN_GRACE),
+            Reconciled::BlockOnly {
+                block_seconds: 900
+            }
+        );
+    }
+
+    #[test]
+    fn an_expired_lock_does_not_count_as_a_block() {
+        let row = a_row(1_600, crate::db::sessions::State::Running);
+        let lock = lock_ending_at(900);
+        assert_eq!(
+            reconcile(Some(&row), Some(&lock), 1_000, CHECKIN_GRACE),
+            Reconciled::Running {
+                seconds_remaining: 600,
+                block_seconds: None,
+            }
+        );
     }
 
     #[test]

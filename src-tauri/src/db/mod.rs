@@ -6,6 +6,7 @@
 //! when no webview is alive.
 
 pub mod intentions;
+pub mod sessions;
 pub mod tasks;
 
 use std::path::PathBuf;
@@ -113,6 +114,63 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             "#,
         )
         .map_err(|err| format!("migration 2 failed: {err}"))?;
+    }
+
+    if version < 3 {
+        // A session is what a ritual commits you to: one task, for a while.
+        // Separate from `intentions` because an intention is an append-only
+        // record of what you said at the start, while a session has a life -
+        // it runs, it ends, and someone answers for it. Overwriting the
+        // intention to hold that would destroy the before/after pair that makes
+        // recording a prediction worth anything.
+        //
+        // Timestamps are unix seconds here rather than the RFC3339 the older
+        // tables use: these are compared against the lock's `locked_until` and
+        // subtracted on every poll of the expiry watcher.
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            CREATE TABLE IF NOT EXISTS sessions(
+                id INTEGER PRIMARY KEY,
+                intention_id INTEGER NOT NULL REFERENCES intentions(id),
+                task_id INTEGER REFERENCES tasks(id),
+                -- Snapshot, not a join: the banner and the check-in need the
+                -- title, and renaming or deleting the task later must not
+                -- rewrite what a past session was about.
+                task_title TEXT,
+                started_ts INTEGER NOT NULL,
+                ends_ts INTEGER NOT NULL,
+                duration_min INTEGER NOT NULL,
+                -- 1 only when the hosts file was read back and carried the block.
+                enforced INTEGER NOT NULL DEFAULT 0,
+                categories TEXT,
+                -- Snapshot too, so scoring the check-in needs no join.
+                predicted_yes INTEGER,
+                state TEXT NOT NULL DEFAULT 'running' CHECK(state IN (
+                    'running',
+                    'awaiting_checkin',
+                    'completed',
+                    'partly',
+                    'missed',
+                    'ended_early',
+                    'lapsed',
+                    'unanswered'
+                )),
+                ended_ts INTEGER,
+                answered_ts INTEGER,
+                task_done INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions(state);
+            CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_ts);
+            -- At most one session may be running. Two is a bug, and an insert
+            -- that fails loudly beats two banners and two check-ins.
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_one_running
+                ON sessions(state) WHERE state = 'running';
+            PRAGMA user_version = 3;
+            COMMIT;
+            "#,
+        )
+        .map_err(|err| format!("migration 3 failed: {err}"))?;
     }
 
     Ok(())

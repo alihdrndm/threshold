@@ -14,10 +14,16 @@ export function TaskCard({
   task,
   onToggleDone,
   onFocus,
+  active = false,
+  sessionRunning = false,
 }: {
   task: Task;
   onToggleDone: (task: Task) => void;
   onFocus?: (task: Task) => void;
+  /** A session is running on *this* task. */
+  active?: boolean;
+  /** A session is running on some task, this one or another. */
+  sessionRunning?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id });
@@ -34,6 +40,7 @@ export function TaskCard({
       ref={setNodeRef}
       data-dragging={isDragging || undefined}
       data-done={done || undefined}
+      data-active={(active && !done) || undefined}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -88,17 +95,34 @@ export function TaskCard({
 
       {/* Always visible rather than revealed on hover: a control you cannot see
           is a control most people never find. */}
-      {onFocus && !done && (
-        <button
-          type="button"
-          onClick={() => onFocus(task)}
-          // Border derived from ink rather than the white-alpha token, which is
-          // invisible in light mode and near-invisible on a tinted card.
-          className="ritual-pressable shrink-0 rounded-full border border-[color-mix(in_srgb,var(--color-ink)_16%,transparent)] px-2.5 py-1 text-xs text-[var(--zone-ink-muted)] hover:text-[var(--color-ink)]"
-        >
-          Focus
-        </button>
-      )}
+      {onFocus &&
+        !done &&
+        (active ? (
+          // Not a button. There is one way to end a session and it lives in the
+          // banner, next to the number that explains why you would.
+          <span className="shrink-0 rounded-full border border-[color-mix(in_srgb,var(--color-accent)_55%,transparent)] px-2.5 py-1 text-xs text-[var(--color-ink)]">
+            Running
+          </span>
+        ) : (
+          <button
+            type="button"
+            // Still pressable while another session runs. A greyed-out control
+            // tells you nothing; one that answers tells you why, and the answer
+            // lands in the error line TasksView already renders.
+            aria-disabled={sessionRunning || undefined}
+            onClick={() => onFocus(task)}
+            // Border derived from ink rather than the white-alpha token, which is
+            // invisible in light mode and near-invisible on a tinted card.
+            className={clsx(
+              "ritual-pressable shrink-0 rounded-full border border-[color-mix(in_srgb,var(--color-ink)_16%,transparent)] px-2.5 py-1 text-xs",
+              sessionRunning
+                ? "text-[color-mix(in_srgb,var(--zone-ink-muted)_65%,transparent)]"
+                : "text-[var(--zone-ink-muted)] hover:text-[var(--color-ink)]",
+            )}
+          >
+            Focus
+          </button>
+        ))}
     </div>
   );
 }
