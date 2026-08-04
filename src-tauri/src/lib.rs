@@ -59,6 +59,7 @@ pub fn run() {
             commands::set_window_theme,
             commands::emergency_unblock,
             commands::session_status,
+            commands::recent_sessions,
             commands::end_session_early,
             commands::pending_checkin,
             commands::answer_checkin,
