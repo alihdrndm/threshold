@@ -32,6 +32,14 @@ pub fn open() -> Result<Connection, String> {
 
 /// Migrations are applied by `user_version`, so adding a table later is a new
 /// numbered step rather than an edit to an old one.
+///
+/// Each step runs inside a transaction, with its `PRAGMA user_version` bump as
+/// the last statement, so a step either lands whole or not at all. Without that,
+/// a failure partway leaves the schema changed and the version unbumped, and
+/// every later launch re-runs a step that can no longer succeed — a duplicate
+/// column is enough. `db::open()` failing aborts `setup()`, so the result is an
+/// app that does not start at all: no window, no tray, no way to repair it, and
+/// possibly a live block with nothing left to lift it.
 fn migrate(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
         .map_err(|err| format!("could not configure database: {err}"))?;
@@ -43,6 +51,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     if version < 1 {
         conn.execute_batch(
             r#"
+            BEGIN;
             CREATE TABLE IF NOT EXISTS intentions(
                 id INTEGER PRIMARY KEY,
                 ts TEXT NOT NULL,
@@ -65,6 +74,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             );
             CREATE INDEX IF NOT EXISTS idx_intentions_ts ON intentions(ts);
             PRAGMA user_version = 1;
+            COMMIT;
             "#,
         )
         .map_err(|err| format!("migration 1 failed: {err}"))?;
@@ -75,6 +85,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         // to from settings.
         conn.execute_batch(
             r#"
+            BEGIN;
             CREATE TABLE IF NOT EXISTS contexts(
                 id INTEGER PRIMARY KEY,
                 name TEXT UNIQUE,
@@ -98,6 +109,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
                 ('Job', 0), ('Personal', 1), ('Side', 2);
             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
             PRAGMA user_version = 2;
+            COMMIT;
             "#,
         )
         .map_err(|err| format!("migration 2 failed: {err}"))?;
