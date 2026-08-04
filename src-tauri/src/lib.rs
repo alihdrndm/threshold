@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 pub mod diagnostics;
+mod log;
 mod pause;
 mod popup;
 mod session;
@@ -192,6 +193,23 @@ pub fn handle_task_cli(args: &[String]) -> bool {
     // Every failure the user hit was silent; this makes them all visible.
     if args.iter().any(|a| a == "--doctor") {
         println!("{}", diagnostics::diagnostics().report());
+        return true;
+    }
+
+    // What the app has actually been deciding, since the shipped build has no
+    // console to print it to.
+    if args.iter().any(|a| a == "--log") {
+        let lines = log::tail(60);
+        if lines.is_empty() {
+            println!("nothing logged yet");
+        } else {
+            for line in lines {
+                println!("{line}");
+            }
+        }
+        if let Some(path) = log::path() {
+            println!("\n(full log: {})", path.display());
+        }
         return true;
     }
 

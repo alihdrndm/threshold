@@ -100,9 +100,18 @@ fn build(app: &AppHandle, kind: TriggerKind, intent: Option<String>) -> tauri::R
 
     window.show()?;
 
-    // At logon and wake there is no competing foreground window, so this
-    // succeeds; at other times Windows may refuse and that is fine.
-    let _ = window.set_focus();
+    // Deliberately NOT set_focus().
+    //
+    // When Windows refuses SetForegroundWindow, tao falls back to synthesising
+    // a left-Alt keypress with SendInput to steal the foreground permission
+    // (tao window.rs, force_window_active). If the ritual window does not take
+    // that focus, the fake keystroke lands on the shell instead — which opened
+    // the Start menu every time the machine woke or unlocked.
+    //
+    // Injecting keystrokes into someone's session is not an acceptable price
+    // for focus, and it buys little here: the window is already fullscreen and
+    // always-on-top, so it is visible whether or not it holds focus. Keyboard
+    // input goes to it once clicked.
 
     Ok(())
 }
