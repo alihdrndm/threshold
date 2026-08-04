@@ -156,20 +156,24 @@ pub fn title_of(conn: &Connection, id: i64) -> Result<String, String> {
     .map_err(|_| format!("no task with id {id}"))
 }
 
-/// Titles from the "Do First" quadrant, for the ritual's one-click chips.
+/// The "Do First" quadrant, for the ritual's one-click chips.
 ///
 /// This is the point of the whole feature: at the vulnerable moment you are
 /// shown what matters rather than asked to remember it.
-pub fn do_first_titles(conn: &Connection, limit: i64) -> Result<Vec<String>, String> {
+///
+/// Carries the id alongside the title so that picking a chip links the record
+/// to its task. Returning titles alone was why only the Focus button could ever
+/// populate `intentions.task_id`.
+pub fn do_first(conn: &Connection, limit: i64) -> Result<Vec<(i64, String)>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT title FROM tasks
+            "SELECT id, title FROM tasks
              WHERE status = 'open' AND urgent = 1 AND important = 1
              ORDER BY sort_order, id LIMIT ?1",
         )
         .map_err(|err| format!("could not read do-first tasks: {err}"))?;
     let rows = stmt
-        .query_map([limit], |row| row.get::<_, String>(0))
+        .query_map([limit], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(|err| format!("could not read do-first tasks: {err}"))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|err| format!("could not read do-first tasks: {err}"))
@@ -245,8 +249,12 @@ mod tests {
         let b = add(&conn, &new("merely important")).unwrap();
         set_quadrant(&conn, a, Some(true), Some(true), 0).unwrap();
         set_quadrant(&conn, b, Some(false), Some(true), 0).unwrap();
-        let titles = do_first_titles(&conn, 3).unwrap();
-        assert_eq!(titles, vec!["urgent and important".to_string()]);
+        let chips = do_first(&conn, 3).unwrap();
+        assert_eq!(
+            chips,
+            vec![(a, "urgent and important".to_string())],
+            "the chip must carry its task id, or picking it cannot link the record"
+        );
     }
 
     #[test]
@@ -255,7 +263,7 @@ mod tests {
         let id = add(&conn, &new("done already")).unwrap();
         set_quadrant(&conn, id, Some(true), Some(true), 0).unwrap();
         set_status(&conn, id, "done").unwrap();
-        assert!(do_first_titles(&conn, 3).unwrap().is_empty());
+        assert!(do_first(&conn, 3).unwrap().is_empty());
     }
 
     #[test]

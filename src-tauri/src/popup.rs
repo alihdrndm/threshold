@@ -14,8 +14,21 @@ use crate::triggers::TriggerKind;
 
 pub const POPUP_LABEL: &str = "popup";
 
+/// What the ritual should already know when it opens.
+///
+/// Bundled rather than passed as loose arguments: this grows every time the
+/// ritual learns to start from somewhere new, and a fourth positional `Option`
+/// is how call sites start silently swapping them.
+#[derive(Debug, Default, Clone)]
+pub struct Prefill {
+    /// The intention, already decided. Skips the arrival and intention steps.
+    pub intent: Option<String>,
+    /// The task it came from, so the record can point back at it.
+    pub task_id: Option<i64>,
+}
+
 pub fn show(app: &AppHandle, kind: TriggerKind) -> tauri::Result<()> {
-    show_with_intent(app, kind, None)
+    show_with_prefill(app, kind, Prefill::default())
 }
 
 /// Open the ritual, optionally with the intention already chosen.
@@ -25,10 +38,10 @@ pub fn show(app: &AppHandle, kind: TriggerKind) -> tauri::Result<()> {
 /// which is what happened when a trigger arrived while the session was locked.
 /// Checking that inline is not possible: presentation happens on the event loop,
 /// so waiting for it there blocks the thread that performs it.
-pub fn show_with_intent(
+pub fn show_with_prefill(
     app: &AppHandle,
     kind: TriggerKind,
-    intent: Option<String>,
+    prefill: Prefill,
 ) -> tauri::Result<()> {
     // A popup window can survive in a hidden, unusable state - created while the
     // session was locked, or left behind by a ritual that never closed cleanly.
@@ -53,7 +66,7 @@ pub fn show_with_intent(
             .name("threshold-popup-rebuild".into())
             .spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(400));
-                if let Err(err) = build(&app, kind, intent) {
+                if let Err(err) = build(&app, kind, prefill) {
                     eprintln!("popup: could not rebuild the ritual: {err}");
                 }
             })
@@ -61,10 +74,10 @@ pub fn show_with_intent(
         return Ok(());
     }
 
-    build(app, kind, intent)
+    build(app, kind, prefill)
 }
 
-fn build(app: &AppHandle, kind: TriggerKind, intent: Option<String>) -> tauri::Result<()> {
+fn build(app: &AppHandle, kind: TriggerKind, prefill: Prefill) -> tauri::Result<()> {
 
     // `--theme=<id>` previews one of the rotating themes without waiting for
     // its day to come round. Anything unrecognised falls back to the rotation.
@@ -73,9 +86,19 @@ fn build(app: &AppHandle, kind: TriggerKind, intent: Option<String>) -> tauri::R
         .map(|id| format!("&theme={id}"))
         .unwrap_or_default();
 
-    let intent_param = intent
+    let intent_param = prefill
+        .intent
         .filter(|value| !value.trim().is_empty())
         .map(|value| format!("&intent={}", urlencode(&value)))
+        .unwrap_or_default();
+
+    // The task travels as a query parameter for the same reason the intention
+    // does: the window is the only channel into the ritual, and a static holding
+    // the id would go stale the moment a ritual is abandoned - which `show`
+    // deliberately allows, since it tears one down and rebuilds it.
+    let task_param = prefill
+        .task_id
+        .map(|id| format!("&task={id}"))
         .unwrap_or_default();
 
     let window = WebviewWindowBuilder::new(
@@ -83,7 +106,7 @@ fn build(app: &AppHandle, kind: TriggerKind, intent: Option<String>) -> tauri::R
         next_ritual_label(),
         WebviewUrl::App(
             format!(
-                "index.html?trigger={}{forced_theme}{intent_param}",
+                "index.html?trigger={}{forced_theme}{intent_param}{task_param}",
                 kind_slug(kind)
             )
             .into(),
@@ -101,7 +124,31 @@ fn build(app: &AppHandle, kind: TriggerKind, intent: Option<String>) -> tauri::R
     .zoom_hotkeys_enabled(true)
     .build()?;
 
-    window.show()?;
+    // Showing has to happen on the main thread.
+    //
+    // A `#[tauri::command]` does not run there - Tauri hands sync commands to a
+    // worker - and a fullscreen window built hidden and shown from a worker is
+    // created, reports success, and never appears. That is precisely what "the
+    // Focus button does nothing" was: a ritual window that existed, on every
+    // click, entirely invisible. Triggers never hit it because they arrive on
+    // the event loop already.
+    //
+    // `run_on_main_thread` queues rather than blocks, so this is safe to call
+    // from either side.
+    // Showing happens on the main thread, and the result is recorded.
+    //
+    // "The window was created" and "the window is on screen" are different
+    // claims, and for a whole release they differed: every Focus click built a
+    // fullscreen ritual that never appeared. Logging what `is_visible` actually
+    // says afterwards is what turns that from a mystery into a line.
+    let to_show = window.clone();
+    window.app_handle().run_on_main_thread(move || match to_show.show() {
+        Ok(()) => crate::log::line(&format!(
+            "ritual: on screen (visible={})",
+            to_show.is_visible().unwrap_or(false)
+        )),
+        Err(err) => crate::log::line(&format!("ritual: could not be shown ({err})")),
+    })?;
 
     // Deliberately NOT set_focus().
     //
