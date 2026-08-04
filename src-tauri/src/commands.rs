@@ -393,6 +393,11 @@ pub fn session_status(db: State<'_, Db>) -> Result<SessionStatus, String> {
 #[serde(rename_all = "camelCase")]
 pub struct SessionRecord {
     pub started_ts: i64,
+    /// When it actually stopped. `None` for one still running.
+    pub ended_ts: Option<i64>,
+    /// What was committed to. Not what was spent — those differ, and conflating
+    /// them is what let an abandoned ninety-minute session count as ninety
+    /// minutes reclaimed.
     pub duration_min: i64,
     pub predicted_yes: Option<bool>,
     pub state: String,
@@ -408,6 +413,7 @@ pub fn recent_sessions(
         .into_iter()
         .map(|row| SessionRecord {
             started_ts: row.started_ts,
+            ended_ts: row.ended_ts,
             duration_min: row.duration_min,
             predicted_yes: row.predicted_yes,
             state: row.state.as_str().to_string(),
