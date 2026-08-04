@@ -57,6 +57,11 @@ pub fn run() {
             commands::repair_helper,
             commands::set_window_theme,
             commands::emergency_unblock,
+            commands::session_status,
+            commands::end_session_early,
+            commands::pending_checkin,
+            commands::answer_checkin,
+            commands::dismiss_checkin,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -76,6 +81,13 @@ pub fn run() {
 
             tray::create_tray(&handle)?;
             triggers::init(handle.clone());
+
+            // Close whatever finished while we were shut, and re-arm whatever
+            // did not. Must come after triggers::init, which replaces the
+            // trigger state wholesale, and before the boot trigger below -
+            // otherwise the logon task walks straight into a fullscreen ritual
+            // on top of a commitment that is still running.
+            session::reconcile_on_startup(&handle);
 
             // A commitment that ran out while the app was closed must still be
             // lifted, so this watches the lock rather than a timer held in the

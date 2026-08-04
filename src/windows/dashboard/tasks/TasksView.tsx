@@ -32,7 +32,13 @@ import { quadrantById, quadrantOf, type QuadrantId } from "./quadrants";
 
 type View = "list" | "matrix";
 
-export function TasksView() {
+export function TasksView({
+  activeTaskId = null,
+  sessionRunning = false,
+}: {
+  activeTaskId?: number | null;
+  sessionRunning?: boolean;
+} = {}) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [contexts, setContexts] = useState<TaskContext[]>([]);
   const [view, setView] = useState<View>("matrix");
@@ -99,6 +105,14 @@ export function TasksView() {
   }
 
   async function focus(task: Task) {
+    // Answered here rather than by disabling the button, so the refusal says
+    // something. Rust refuses too - this is not the guard, only the faster one.
+    if (sessionRunning && task.id !== activeTaskId) {
+      setError(
+        "A session is already running. End it from the banner above to start another.",
+      );
+      return;
+    }
     const result = await focusOnTask(task.id);
     if (!result.opened) {
       setError(result.reason ?? "The ritual could not be opened.");
@@ -190,6 +204,8 @@ export function TasksView() {
               tasks={visible}
               onToggleDone={(t) => run(() => toggleDone(t))}
               onFocus={(t) => run(() => focus(t))}
+              activeTaskId={activeTaskId}
+              sessionRunning={sessionRunning}
             />
           ) : (
             <ListView

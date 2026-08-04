@@ -156,11 +156,23 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
 
 /// Record that a focus session is running, so the ritual does not interrupt one.
 ///
-/// Previously `start_session` existed but was never called, which meant a wake
-/// mid-session re-prompted as if nothing were underway.
-pub fn note_session(duration_min: i64) {
-    let until = Instant::now() + std::time::Duration::from_secs((duration_min.max(0) * 60) as u64);
-    with_state(|state| state.start_session(until));
+/// Takes a deadline rather than a duration, deliberately. The duration form is
+/// the one you reach for at startup, and calling it there with a stored
+/// `duration_min` re-arms a full session on every launch — which would suppress
+/// the boot ritual on the first launch after a week away, the single most
+/// valuable trigger the product has.
+pub fn note_session_until(ends_ts: i64, enforced: bool) {
+    let seconds = ends_ts - chrono::Utc::now().timestamp();
+    if seconds <= 0 {
+        return;
+    }
+    with_state(|state| {
+        state.start_session(debounce::Session {
+            until: Instant::now() + std::time::Duration::from_secs(seconds as u64),
+            ends_ts,
+            enforced,
+        })
+    });
 }
 
 /// A commitment has ended, so triggers may prompt again.

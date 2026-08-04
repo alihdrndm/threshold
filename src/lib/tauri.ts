@@ -69,6 +69,8 @@ export interface BlockOutcome {
 
 export interface RitualResult {
   id: number;
+  /** The session this ritual started, when it committed to a length. */
+  sessionId: number | null;
   /** Present only when the session asked for sites to be blocked. */
   block: BlockOutcome | null;
 }
@@ -206,6 +208,70 @@ export function emergencyUnblock(): Promise<void> {
  */
 export function setWindowTheme(theme: "light" | "dark" | null): Promise<void> {
   return invoke<void>("set_window_theme", { theme });
+}
+
+export interface ActiveSession {
+  id: number;
+  taskId: number | null;
+  /** The task's title as it was when the session began. */
+  subject: string | null;
+  startedTs: number;
+  /** Unix seconds. Authoritative — always derive the countdown from this. */
+  endsTs: number;
+  durationMin: number;
+  /** Advisory only; goes stale the moment the machine sleeps. */
+  secondsRemaining: number;
+  blocking: boolean;
+  categories: string[];
+}
+
+export interface SessionStatus {
+  session: ActiveSession | null;
+  /** Seconds the sites stay quiet, with or without a session behind it. */
+  blockSeconds: number | null;
+}
+
+export function sessionStatus(): Promise<SessionStatus> {
+  return invoke<SessionStatus>("session_status");
+}
+
+export interface EndSessionResult {
+  /** Non-null means the sites stay blocked after the session ends. */
+  blockHeldSecs: number | null;
+}
+
+export function endSessionEarly(sessionId: number): Promise<EndSessionResult> {
+  return invoke<EndSessionResult>("end_session_early", { sessionId });
+}
+
+export interface PendingCheckin {
+  sessionId: number;
+  taskId: number | null;
+  canMarkDone: boolean;
+  subject: string | null;
+  predictedYes: boolean | null;
+  /** Minutes actually elapsed, not minutes committed. */
+  minutes: number;
+  lateBy: number;
+  blockHeldSecs: number | null;
+}
+
+export type CheckinAnswer = "did_it" | "partly" | "no";
+
+export function pendingCheckin(): Promise<PendingCheckin | null> {
+  return invoke<PendingCheckin | null>("pending_checkin");
+}
+
+export function answerCheckin(
+  sessionId: number,
+  answer: CheckinAnswer,
+  markTaskDone: boolean,
+): Promise<void> {
+  return invoke<void>("answer_checkin", { sessionId, answer, markTaskDone });
+}
+
+export function dismissCheckin(sessionId: number): Promise<void> {
+  return invoke<void>("dismiss_checkin", { sessionId });
 }
 
 /** Unix seconds a pause runs until, or null when nothing is paused. */

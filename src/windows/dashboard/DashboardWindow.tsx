@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { pauseStatus, resumeNow } from "@/lib/tauri";
 import { useAppearance } from "@/appearance/useAppearance";
+import { useSession } from "@/session/useSession";
+import { Banner, BannerAction } from "./Banner";
+import { BlockOnlyBanner, SessionBanner } from "./SessionBanner";
 import { TasksView } from "./tasks/TasksView";
 import { OverviewView } from "./OverviewView";
 import { SettingsView } from "./SettingsView";
@@ -18,6 +21,7 @@ export function DashboardWindow() {
   // something you read occasionally.
   const [tab, setTab] = useState<Tab>("tasks");
   const { appearance, setAppearance } = useAppearance();
+  const { status, end: endSession } = useSession();
   const [pausedUntil, setPausedUntil] = useState<number | null>(null);
 
   // Re-checked when the window opens and whenever a tab changes, so resuming
@@ -49,30 +53,41 @@ export function DashboardWindow() {
         ))}
       </nav>
 
-      {/* A pause stops everything the app exists to do. It belongs across the
-          top of every tab, not folded into a settings panel nobody opens. */}
-      {pausedUntil !== null && (
-        <div className="flex items-center gap-4 border-b border-[var(--color-accent)]/40 bg-[var(--color-accent)]/[0.08] px-8 py-3">
-          <p className="flex-1 text-sm">
-            Threshold is paused until{" "}
-            {new Date(pausedUntil * 1000).toLocaleString()}. Nothing will
-            interrupt you until then.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              void resumeNow().then(() => setPausedUntil(null));
-            }}
-            className="ritual-pressable rounded-full border border-[var(--color-border-subtle)] px-4 py-1.5 text-sm"
-          >
-            Resume now
-          </button>
-        </div>
-      )}
+      {/* One strip, never two.
+          A pause stops everything the app exists to do, so it outranks a
+          countdown — the same precedence the tray tooltip already uses. Both
+          being true should be impossible (a session cannot start while paused),
+          which is exactly why it is handled rather than assumed away. */}
+      {pausedUntil !== null ? (
+        <Banner
+          action={
+            <BannerAction
+              onClick={() => {
+                void resumeNow().then(() => setPausedUntil(null));
+              }}
+            >
+              Resume now
+            </BannerAction>
+          }
+        >
+          Threshold is paused until{" "}
+          {new Date(pausedUntil * 1000).toLocaleString()}. Nothing will
+          interrupt you until then.
+        </Banner>
+      ) : status?.session ? (
+        <SessionBanner session={status.session} onEnd={endSession} />
+      ) : status?.blockSeconds ? (
+        <BlockOnlyBanner seconds={status.blockSeconds} />
+      ) : null}
 
       <div className="min-h-0 flex-1">
         {tab === "overview" && <OverviewView />}
-        {tab === "tasks" && <TasksView />}
+        {tab === "tasks" && (
+          <TasksView
+            activeTaskId={status?.session?.taskId ?? null}
+            sessionRunning={Boolean(status?.session)}
+          />
+        )}
         {tab === "settings" && (
           <SettingsView
             appearance={appearance}

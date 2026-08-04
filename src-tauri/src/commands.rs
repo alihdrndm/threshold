@@ -3,7 +3,7 @@
 
 use tauri::{Manager, State};
 
-use crate::db::{self, intentions, tasks, Db};
+use crate::db::{self, intentions, sessions, tasks, Db};
 
 #[tauri::command]
 pub fn ping() -> String {
@@ -14,11 +14,21 @@ pub fn ping() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct RitualResult {
     pub id: i64,
+    /// The session this ritual started, when it committed to a length.
+    pub session_id: Option<i64>,
     /// Present when the session asked for sites to be blocked. `blocked: false`
     /// carries a reason the confirmation screen shows, because telling someone
     /// their sites are blocked when they are not is worse than not blocking.
     pub block: Option<crate::session::BlockOutcome>,
 }
+
+/// The longest commitment a single ritual may make.
+///
+/// Matches `MAX_DURATION` in the frontend's copy, and is enforced here as well
+/// because the frontend is not a trust boundary. Beyond two hours this stops
+/// being a focus session and becomes a Pause with extra steps - and Pause
+/// already exists, with its own screen and its own way out.
+const MAX_DURATION_MIN: i64 = 120;
 
 /// Record what the user did, arm any block they committed to, then close.
 ///
@@ -31,21 +41,11 @@ pub fn finish_ritual(
     db: State<'_, Db>,
     mut intention: intentions::NewIntention,
 ) -> Result<RitualResult, String> {
-    let id = {
-        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
-
-        // Foreign keys are on, so an id that no longer resolves - the task was
-        // deleted while the ritual was open - would fail the insert. Losing the
-        // whole record over a link is the wrong trade: the intention is what
-        // matters, the link is an extra.
-        if let Some(task_id) = intention.task_id {
-            if tasks::title_of(&conn, task_id).is_err() {
-                intention.task_id = None;
-            }
-        }
-
-        intentions::insert(&conn, &intention)?
-    };
+    let now = chrono::Utc::now().timestamp();
+    let minutes = intention
+        .duration_min
+        .filter(|m| *m > 0)
+        .map(|m| m.min(MAX_DURATION_MIN));
 
     let categories: Vec<String> = intention
         .categories
@@ -56,18 +56,90 @@ pub fn finish_ritual(
         .map(str::to_owned)
         .collect();
 
-    let block = match (categories.is_empty(), intention.duration_min) {
-        (false, Some(minutes)) if minutes > 0 => {
+    let (id, session_id) = {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+
+        // Foreign keys are on, so an id that no longer resolves - the task was
+        // deleted while the ritual was open - would fail the insert. Losing the
+        // whole record over a link is the wrong trade: the intention is what
+        // matters, the link is an extra.
+        let task_title = match intention.task_id {
+            Some(task_id) => match tasks::title_of(&conn, task_id) {
+                Ok(title) => Some(title),
+                Err(_) => {
+                    intention.task_id = None;
+                    None
+                }
+            },
+            None => None,
+        };
+
+        // One transaction: a session without its intention is unrecoverable,
+        // and the two are written together or not at all.
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|err| format!("could not begin: {err}"))?;
+
+        // A row left open by a run that was killed would take the one running
+        // slot with it, and the unique index would then refuse this insert.
+        if let Some(stale) = sessions::live(&tx)? {
+            sessions::mark(&tx, stale.id, sessions::State::Unanswered, Some(now))?;
+        }
+
+        let id = intentions::insert(&tx, &intention)?;
+
+        // The decoupling: a length is all it takes. Blocking is enforcement on
+        // top, and choosing none used to mean the whole ritual produced nothing
+        // but a database row.
+        let session_id = match minutes {
+            Some(minutes) => Some(sessions::start(
+                &tx,
+                &sessions::NewSession {
+                    intention_id: id,
+                    task_id: intention.task_id,
+                    task_title,
+                    duration_min: minutes,
+                    categories: intention.categories.clone(),
+                    predicted_yes: intention.predicted_yes,
+                },
+                now,
+            )?),
+            // The honourable exit commits to nothing, so there is nothing to run.
+            None => None,
+        };
+
+        tx.commit().map_err(|err| format!("could not save: {err}"))?;
+        (id, session_id)
+    };
+
+    // Arming is outside the transaction: it waits on an elevated process for up
+    // to twelve seconds, and holding a database lock across that would freeze
+    // every other reader.
+    let block = match (categories.is_empty(), minutes) {
+        (false, Some(minutes)) => {
             let outcome = crate::session::arm(&categories, minutes);
             if outcome.blocked {
-                // Tell the debounce a session is running so the ritual does not
-                // reappear on the next wake in the middle of one.
-                crate::triggers::note_session(minutes);
+                if let (Some(session_id), Some(lock)) = (session_id, crate::session::active_lock())
+                {
+                    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+                    sessions::confirm_block(&conn, session_id, lock.locked_until)?;
+                }
             }
             Some(outcome)
         }
         _ => None,
     };
+
+    // Tell the debounce, whether or not a block was armed - but tell it which,
+    // because only an enforced session silences boot, wake and unlock.
+    if let Some(minutes) = minutes {
+        let enforced = block.as_ref().is_some_and(|outcome| outcome.blocked);
+        crate::triggers::note_session_until(now + minutes * 60, enforced);
+    }
+
+    if let Some(session_id) = session_id {
+        crate::session::announce_started(&app, session_id);
+    }
 
     // A failed block keeps the window open so the reason is read rather than
     // flashing past on the way out.
@@ -76,7 +148,11 @@ pub fn finish_ritual(
         crate::popup::close(&app).map_err(|err| err.to_string())?;
     }
 
-    Ok(RitualResult { id, block })
+    Ok(RitualResult {
+        id,
+        session_id,
+        block,
+    })
 }
 
 /// Chips offered on the intention step.
@@ -236,6 +312,213 @@ pub fn set_window_theme(app: tauri::AppHandle, theme: Option<String>) {
         Some("dark") => Some(tauri::Theme::Dark),
         _ => None,
     });
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveSession {
+    pub id: i64,
+    pub task_id: Option<i64>,
+    /// The task's title as it was when the session began, or the typed
+    /// intention when there was no task.
+    pub subject: Option<String>,
+    pub started_ts: i64,
+    pub ends_ts: i64,
+    pub duration_min: i64,
+    /// Advisory. The UI recomputes from `endsTs` on every tick rather than
+    /// trusting this, because a number sent once goes stale across a sleep.
+    pub seconds_remaining: i64,
+    /// Live, from the lock - not the stored flag, which only records what was
+    /// true at arm time. A block may have been lifted since.
+    pub blocking: bool,
+    pub categories: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStatus {
+    pub session: Option<ActiveSession>,
+    /// Seconds the sites stay quiet, whether or not a session is behind it.
+    /// Present on its own after an upgrade mid-commitment, or when a block
+    /// outlives the session that armed it.
+    pub block_seconds: Option<i64>,
+}
+
+fn split_categories(raw: Option<&str>) -> Vec<String> {
+    raw.unwrap_or_default()
+        .split(',')
+        .filter(|c| !c.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// What is running, if anything.
+#[tauri::command]
+pub fn session_status(db: State<'_, Db>) -> Result<SessionStatus, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    let now = chrono::Utc::now().timestamp();
+    let lock = crate::session::active_lock();
+    let block_seconds = lock
+        .as_ref()
+        .map(crate::session::seconds_remaining)
+        .filter(|left| *left > 0);
+
+    let session = sessions::live(&conn)?
+        .filter(|row| row.ends_ts > now)
+        .map(|row| ActiveSession {
+            id: row.id,
+            task_id: row.task_id,
+            subject: row.task_title.clone(),
+            started_ts: row.started_ts,
+            ends_ts: row.ends_ts,
+            duration_min: row.duration_min,
+            seconds_remaining: (row.ends_ts - now).max(0),
+            blocking: block_seconds.is_some(),
+            categories: split_categories(row.categories.as_deref()),
+        });
+
+    Ok(SessionStatus {
+        session,
+        block_seconds,
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndSessionResult {
+    /// The commitment lock is the point of the product, so ending a session
+    /// does not lift a block that still owes time. `Some(n)` means the sites
+    /// stay quiet for another n seconds, and the UI has to say so rather than
+    /// removing the banner and leaving no explanation for why Reddit is broken.
+    pub block_held_secs: Option<i64>,
+}
+
+/// Stop a session before its time. The block, if any, keeps its own schedule.
+#[tauri::command]
+pub fn end_session_early(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    session_id: i64,
+) -> Result<EndSessionResult, String> {
+    let now = chrono::Utc::now().timestamp();
+    {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        sessions::mark(&conn, session_id, sessions::State::AwaitingCheckin, Some(now))?;
+    }
+    crate::triggers::clear_session();
+    crate::session::announce_ended(&app, session_id, "early");
+
+    Ok(EndSessionResult {
+        block_held_secs: crate::session::active_lock()
+            .map(|lock| crate::session::seconds_remaining(&lock))
+            .filter(|left| *left > 0),
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingCheckin {
+    pub session_id: i64,
+    pub task_id: Option<i64>,
+    /// Only offered when the task still exists and is still open. Ticking a
+    /// deleted task "done" would resurrect it into the matrix.
+    pub can_mark_done: bool,
+    pub subject: Option<String>,
+    pub predicted_yes: Option<bool>,
+    /// Minutes actually elapsed, not minutes committed. A session ended after
+    /// nine minutes says nine.
+    pub minutes: i64,
+    /// Seconds since it ran out. Non-zero means the machine was asleep or the
+    /// user was away.
+    pub late_by: i64,
+    pub block_held_secs: Option<i64>,
+}
+
+/// The question owed, if one is.
+#[tauri::command]
+pub fn pending_checkin(db: State<'_, Db>) -> Result<Option<PendingCheckin>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    let now = chrono::Utc::now().timestamp();
+
+    let Some(row) = sessions::awaiting(&conn)? else {
+        return Ok(None);
+    };
+
+    let ended = row.ended_ts.unwrap_or(row.ends_ts);
+    let can_mark_done = match row.task_id {
+        Some(task_id) => tasks::is_open(&conn, task_id).unwrap_or(false),
+        None => false,
+    };
+
+    Ok(Some(PendingCheckin {
+        session_id: row.id,
+        task_id: row.task_id,
+        can_mark_done,
+        subject: row.task_title,
+        predicted_yes: row.predicted_yes,
+        minutes: ((ended - row.started_ts).max(0) + 30) / 60,
+        late_by: (now - ended).max(0),
+        block_held_secs: crate::session::active_lock()
+            .map(|lock| crate::session::seconds_remaining(&lock))
+            .filter(|left| *left > 0),
+    }))
+}
+
+/// Record how it went, and optionally tick the task off in the same breath.
+#[tauri::command]
+pub fn answer_checkin(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    session_id: i64,
+    answer: sessions::Answer,
+    mark_task_done: bool,
+) -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp();
+    {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|err| format!("could not begin: {err}"))?;
+
+        let row = sessions::by_id(&tx, session_id)?
+            .ok_or_else(|| format!("no session with id {session_id}"))?;
+
+        // Same transaction, so a task marked done always has a session row
+        // saying why. Re-checked here rather than trusted from the UI: the task
+        // may have been deleted while the question sat on screen.
+        let done = mark_task_done
+            && match row.task_id {
+                Some(task_id) if tasks::is_open(&tx, task_id).unwrap_or(false) => {
+                    tasks::set_status(&tx, task_id, "done")?;
+                    true
+                }
+                _ => false,
+            };
+
+        sessions::answer(&tx, session_id, answer, done, now)?;
+        tx.commit().map_err(|err| format!("could not save: {err}"))?;
+    }
+    crate::session::announce_ended(&app, session_id, "answered");
+    Ok(())
+}
+
+/// Closed without answering.
+///
+/// Recorded as its own outcome, never as a "no". A question you cannot decline
+/// is a trap, and silence scored as failure would corrupt the one measurement
+/// the check-in exists to make.
+#[tauri::command]
+pub fn dismiss_checkin(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    session_id: i64,
+) -> Result<(), String> {
+    {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        sessions::mark(&conn, session_id, sessions::State::Unanswered, None)?;
+    }
+    crate::session::announce_ended(&app, session_id, "dismissed");
+    Ok(())
 }
 
 /// Lift a block that is still owed time, and record that it happened.

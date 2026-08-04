@@ -48,12 +48,34 @@ pub enum Decision {
 /// returns.
 pub const WAKE_HANDOVER: Duration = Duration::from_secs(180);
 
+/// A running session, as the debounce sees it.
+#[derive(Debug, Clone, Copy)]
+pub struct Session {
+    /// Monotonic deadline. Immune to a changed system clock.
+    pub until: Instant,
+    /// Wall-clock deadline, in unix seconds.
+    ///
+    /// Carried alongside the monotonic one because `Instant` is
+    /// QueryPerformanceCounter, and across suspend it may not advance at all.
+    /// A session started before a four-hour sleep would then still look live on
+    /// waking, and suppress every trigger until the app restarted - silently
+    /// disabling the one moment the product exists for.
+    pub ends_ts: i64,
+    /// Whether a block was actually confirmed in the hosts file.
+    ///
+    /// Only an enforced session silences boot, wake and unlock. A block-less
+    /// session is a self-report with no evidence behind it, and the likeliest
+    /// state at a wake forty minutes in is that the user left and came back -
+    /// exactly what the ritual is for.
+    pub enforced: bool,
+}
+
 #[derive(Debug)]
 pub struct TriggerState {
     last_shown: Option<Instant>,
     last_kind: Option<TriggerKind>,
     locked_at: Option<Instant>,
-    session_until: Option<Instant>,
+    session: Option<Session>,
     lock_threshold: Duration,
 }
 
@@ -63,7 +85,7 @@ impl Default for TriggerState {
             last_shown: None,
             last_kind: None,
             locked_at: None,
-            session_until: None,
+            session: None,
             lock_threshold: DEFAULT_LOCK_THRESHOLD,
         }
     }
@@ -99,19 +121,38 @@ impl TriggerState {
         self.locked_at = None;
     }
 
-    pub fn start_session(&mut self, until: Instant) {
-        self.session_until = Some(until);
+    pub fn start_session(&mut self, session: Session) {
+        self.session = Some(session);
     }
 
     pub fn end_session(&mut self) {
-        self.session_until = None;
+        self.session = None;
+    }
+
+    /// Is a session still running, by both clocks?
+    ///
+    /// Both must agree. A monotonic clock frozen by suspend can only end a
+    /// suppression early this way, never extend it forever; the worst case is
+    /// one ritual the user did not strictly need, which is a far better failure
+    /// than a product that quietly stops working after a nap.
+    fn session_live(&self, now: Instant, now_ts: i64) -> Option<Session> {
+        let session = self.session?;
+        (now < session.until && now_ts < session.ends_ts).then_some(session)
     }
 
     pub fn evaluate(&self, kind: TriggerKind, now: Instant) -> Decision {
-        // Asking for it explicitly overrides every guard except an active
-        // session, which has its own screen.
-        if let Some(until) = self.session_until {
-            if now < until {
+        self.evaluate_at(kind, now, chrono::Utc::now().timestamp())
+    }
+
+    pub fn evaluate_at(&self, kind: TriggerKind, now: Instant, now_ts: i64) -> Decision {
+        // A session in progress has its own screen, so nothing else opens one.
+        //
+        // Only an enforced session stops a trigger, though. Without a block
+        // there is no evidence the commitment is still in force, and swallowing
+        // boot, wake and unlock for hours on the strength of a click nobody
+        // followed through on is how the app disables itself.
+        if let Some(session) = self.session_live(now, now_ts) {
+            if session.enforced || kind == TriggerKind::Manual {
                 return Decision::SessionInProgress;
             }
         }
@@ -221,10 +262,18 @@ mod tests {
         );
     }
 
+    fn session(secs: u64, enforced: bool) -> Session {
+        Session {
+            until: Instant::now() + Duration::from_secs(secs),
+            ends_ts: chrono::Utc::now().timestamp() + secs as i64,
+            enforced,
+        }
+    }
+
     #[test]
-    fn an_active_session_suppresses_everything_including_manual() {
+    fn a_blocked_session_suppresses_everything_including_manual() {
         let mut state = TriggerState::default();
-        state.start_session(Instant::now() + Duration::from_secs(600));
+        state.start_session(session(600, true));
         for kind in [
             TriggerKind::Boot,
             TriggerKind::Wake,
@@ -239,11 +288,67 @@ mod tests {
     }
 
     #[test]
-    fn an_expired_session_stops_suppressing() {
+    fn a_blockless_session_still_lets_the_ritual_interrupt() {
+        // Without a block there is no evidence the commitment is still in
+        // force. Suppressing wake and unlock on the strength of a click nobody
+        // followed through on is the app quietly switching itself off.
         let mut state = TriggerState::default();
-        state.start_session(ago(1));
+        state.start_session(session(600, false));
+
+        for kind in [TriggerKind::Boot, TriggerKind::Wake] {
+            assert_eq!(state.evaluate(kind, Instant::now()), Decision::Show);
+        }
+        // But a second Focus click is still refused: that one has a screen.
         assert_eq!(
             state.evaluate(TriggerKind::Manual, Instant::now()),
+            Decision::SessionInProgress
+        );
+    }
+
+    #[test]
+    fn an_expired_session_stops_suppressing() {
+        let mut state = TriggerState::default();
+        state.start_session(Session {
+            until: ago(1),
+            ends_ts: chrono::Utc::now().timestamp() - 1,
+            enforced: true,
+        });
+        assert_eq!(
+            state.evaluate(TriggerKind::Manual, Instant::now()),
+            Decision::Show
+        );
+    }
+
+    #[test]
+    fn a_frozen_monotonic_clock_cannot_suppress_forever() {
+        // The suspend case. `Instant` is QueryPerformanceCounter and may not
+        // advance across sleep, so a session started before a long nap can
+        // still look live on the monotonic clock. The wall clock breaks the
+        // tie, and the trigger gets through.
+        let mut state = TriggerState::default();
+        state.start_session(Session {
+            until: Instant::now() + Duration::from_secs(3_600),
+            ends_ts: chrono::Utc::now().timestamp() - 1,
+            enforced: true,
+        });
+        assert_eq!(
+            state.evaluate(TriggerKind::Wake, Instant::now()),
+            Decision::Show
+        );
+    }
+
+    #[test]
+    fn a_changed_wall_clock_cannot_suppress_forever_either() {
+        // And the mirror image: winding the clock forward does not manufacture
+        // a suppression, because the monotonic side still has to agree.
+        let mut state = TriggerState::default();
+        state.start_session(Session {
+            until: ago(1),
+            ends_ts: chrono::Utc::now().timestamp() + 3_600,
+            enforced: true,
+        });
+        assert_eq!(
+            state.evaluate(TriggerKind::Wake, Instant::now()),
             Decision::Show
         );
     }
