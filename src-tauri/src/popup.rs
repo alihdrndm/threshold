@@ -25,6 +25,10 @@ pub struct Prefill {
     pub intent: Option<String>,
     /// The task it came from, so the record can point back at it.
     pub task_id: Option<i64>,
+    /// Take the one-screen path. Clicking Focus is already a deliberate act, so
+    /// it does not need the full arrival sequence — that one exists to interrupt
+    /// someone who has not decided anything yet.
+    pub express: bool,
 }
 
 pub fn show(app: &AppHandle, kind: TriggerKind) -> tauri::Result<()> {
@@ -101,12 +105,14 @@ fn build(app: &AppHandle, kind: TriggerKind, prefill: Prefill) -> tauri::Result<
         .map(|id| format!("&task={id}"))
         .unwrap_or_default();
 
+    let mode_param = if prefill.express { "&mode=express" } else { "" };
+
     let window = WebviewWindowBuilder::new(
         app,
         next_ritual_label(),
         WebviewUrl::App(
             format!(
-                "index.html?trigger={}{forced_theme}{intent_param}{task_param}",
+                "index.html?trigger={}{forced_theme}{intent_param}{task_param}{mode_param}",
                 kind_slug(kind)
             )
             .into(),
@@ -178,7 +184,7 @@ pub fn close(app: &AppHandle) -> tauri::Result<()> {
 /// Labels carry a counter rather than being fixed, because a window destroyed
 /// on the event loop keeps its label for a moment afterwards. Matching on the
 /// prefix means a replacement never has to wait for its predecessor.
-fn ritual_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
+pub(crate) fn ritual_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
     app.webview_windows()
         .into_iter()
         .filter(|(label, _)| label.starts_with(POPUP_LABEL))

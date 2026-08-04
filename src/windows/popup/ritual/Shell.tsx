@@ -81,12 +81,17 @@ export function Pill({
   selected = false,
   autoFocus = false,
   title,
+  size = "md",
+  disabled = false,
 }: {
   children: ReactNode;
   onClick: () => void;
   selected?: boolean;
   autoFocus?: boolean;
   title?: string;
+  /** `sm` for the express screen, which has five rows to fit on one display. */
+  size?: "sm" | "md";
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -94,12 +99,15 @@ export function Pill({
       onClick={onClick}
       autoFocus={autoFocus}
       title={title}
+      disabled={disabled}
       data-selected={selected || undefined}
-      className={`ritual-pressable rounded-full border px-7 py-3 text-base focus-visible:outline-2 focus-visible:outline-offset-[3px] focus-visible:outline-[var(--color-accent)] ${
+      className={`ritual-pressable rounded-full border focus-visible:outline-2 focus-visible:outline-offset-[3px] focus-visible:outline-[var(--color-accent)] ${
+        size === "sm" ? "px-5 py-2 text-sm" : "px-7 py-3 text-base"
+      } ${
         selected
           ? "border-[var(--color-accent)] bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)] text-[var(--color-ink)]"
           : "border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] text-[var(--color-ink)]"
-      }`}
+      } ${disabled ? "cursor-not-allowed opacity-45" : ""}`}
     >
       {children}
     </button>
@@ -139,14 +147,20 @@ export function Field({
  * dismiss option to be its single most effective feature, and hiding or shaming
  * it is what gets tools like this uninstalled.
  */
-export function HonourableExit({ onClick }: { onClick: () => void }) {
+export function HonourableExit({
+  onClick,
+  label = "Just browsing today",
+}: {
+  onClick: () => void;
+  label?: string;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
       className="ritual-exit absolute bottom-10 z-10 rounded-full px-4 py-2 text-sm text-[var(--color-ink-muted)] underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
     >
-      Just browsing today
+      {label}
     </button>
   );
 }

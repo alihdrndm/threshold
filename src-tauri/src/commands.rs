@@ -273,6 +273,7 @@ pub fn focus_on_task(
     let prefill = crate::popup::Prefill {
         intent: Some(title),
         task_id: Some(task_id),
+        express: true,
     };
 
     match crate::triggers::request_focus(&app, prefill) {
@@ -498,6 +499,7 @@ pub fn answer_checkin(
         sessions::answer(&tx, session_id, answer, done, now)?;
         tx.commit().map_err(|err| format!("could not save: {err}"))?;
     }
+    crate::checkin::close(&app);
     crate::session::announce_ended(&app, session_id, "answered");
     Ok(())
 }
@@ -517,6 +519,7 @@ pub fn dismiss_checkin(
         let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
         sessions::mark(&conn, session_id, sessions::State::Unanswered, None)?;
     }
+    crate::checkin::close(&app);
     crate::session::announce_ended(&app, session_id, "dismissed");
     Ok(())
 }

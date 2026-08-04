@@ -236,6 +236,16 @@ textarea {
 .ritual-step > *:nth-child(5) {
   animation-delay: 160ms;
 }
+/* The express screen has seven rows. Without these the last two arrive with no
+   delay at all — ahead of the items above them, which reads as a glitch rather
+   than a sequence. The last lands at 240 + 240ms, which is the ceiling for a
+   whole-screen entrance: do not let this screen grow an eighth row. */
+.ritual-step > *:nth-child(6) {
+  animation-delay: 200ms;
+}
+.ritual-step > *:nth-child(7) {
+  animation-delay: 240ms;
+}
 
 @keyframes step-item {
   from {
@@ -425,6 +435,21 @@ textarea {
    has to stay a slot. */
 .matrix-card[data-active][data-dragging] {
   box-shadow: none;
+}
+
+/* The check-in window has no frame of its own, so the card supplies one -
+   otherwise an undecorated window reads as a hole punched in the desktop
+   rather than as a panel resting on it. Square corners deliberately: rounding
+   an undecorated window needs a transparent one, and transparency on Windows
+   buys corner artefacts that look worse than the corners it removes. */
+.checkin-card {
+  background-color: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: 0 18px 40px -12px rgb(0 0 0 / 0.55);
+}
+
+:where(:root[data-appearance="light"]) .checkin-card {
+  box-shadow: 0 14px 32px -10px rgb(0 0 0 / 0.22);
 }
 
 /* The one strip under the tab bar. Opacity only: the row's height appears in a

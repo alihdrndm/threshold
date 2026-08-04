@@ -430,6 +430,7 @@ pub fn spawn_expiry_watcher(app: tauri::AppHandle) {
                 }
 
                 let session_seconds = advance_sessions(&app);
+                offer_checkin(&app);
 
                 match active_lock() {
                     Some(lock) if seconds_remaining(&lock) == 0 => {
@@ -498,6 +499,56 @@ pub fn spawn_expiry_watcher(app: tauri::AppHandle) {
             }
         })
         .expect("failed to spawn the expiry watcher");
+}
+
+/// Put the closing question on screen, when there is somewhere to put it.
+///
+/// Four things have to be true, and each one is a bug that has already happened
+/// somewhere in this app:
+///
+/// * within the grace window — past that the answer is a reconstruction, and a
+///   guessed answer scored against a real prediction is worse than none;
+/// * the screen is unlocked — a window built behind the lock screen is never
+///   seen, which is the exact failure the wake ritual was fixed for;
+/// * no ritual is open — two windows fighting for the same moment, neither
+///   holding focus, is worse than either alone. The question waits; the ritual
+///   is the more time-critical of the two;
+/// * it is not already open — one window, ever.
+fn offer_checkin(app: &tauri::AppHandle) {
+    use crate::db::{sessions, Db};
+    use tauri::Manager;
+
+    if crate::checkin::is_open(app) || !crate::popup::ritual_windows(app).is_empty() {
+        return;
+    }
+    if crate::triggers::workstation_locked() {
+        return;
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let Some(state) = app.try_state::<Db>() else {
+        return;
+    };
+    let Ok(conn) = state.0.lock() else {
+        return;
+    };
+    let Ok(Some(row)) = sessions::awaiting(&conn) else {
+        return;
+    };
+
+    let ended = row.ended_ts.unwrap_or(row.ends_ts);
+    if now - ended > CHECKIN_GRACE {
+        let _ = sessions::mark(&conn, row.id, sessions::State::Lapsed, None);
+        drop(conn);
+        crate::log::line("session: the check-in window passed; not asking after the fact");
+        return;
+    }
+
+    let id = row.id;
+    drop(conn);
+    if let Err(err) = crate::checkin::open(app, id) {
+        crate::log::line(&format!("check-in: could not open ({err})"));
+    }
 }
 
 /// Move any session past its deadline, and report what is still counting down.
