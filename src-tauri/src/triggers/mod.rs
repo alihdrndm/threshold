@@ -106,6 +106,19 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
         return;
     }
 
+    // A ritual cannot be shown to a locked screen, and building a fullscreen
+    // window there both wastes the prompt and unsettles the shell on the way
+    // back in. Waiting costs nothing: the unlock that follows is its own
+    // trigger, and it arrives at the moment the user can actually see it.
+    // Not applied to Unlock: that event means the screen has just been
+    // unlocked, and checking would race the desktop switching back.
+    if matches!(kind, TriggerKind::Boot | TriggerKind::Wake) && workstation_locked() {
+        crate::log::line(&format!(
+            "{kind:?}: the screen is locked, waiting for the unlock to show it"
+        ));
+        return;
+    }
+
     let now = Instant::now();
     let decision = with_state(|state| state.evaluate(kind, now)).unwrap_or(Decision::Show);
 
@@ -162,6 +175,30 @@ pub fn clear_session() {
 /// screen wake was dismissed as too soon and nothing was ever seen.
 pub fn forget_last_shown() {
     with_state(|state| state.forget_last_shown());
+}
+
+/// Is the workstation locked right now?
+///
+/// `OpenInputDesktop` fails while the secure (lock screen) desktop is active,
+/// which is the standard way to ask. It matters because a ritual built behind
+/// the lock screen is never seen: it cannot be displayed, and creating a
+/// fullscreen window there also disturbs the shell on the way back in.
+///
+/// This replaces guessing with a time window. How long somebody takes to type
+/// their password is not something to estimate.
+fn workstation_locked() -> bool {
+    use windows::Win32::System::StationsAndDesktops::{
+        CloseDesktop, OpenInputDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS,
+    };
+    unsafe {
+        match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(0x0001)) {
+            Ok(desktop) => {
+                let _ = CloseDesktop(desktop);
+                false
+            }
+            Err(_) => true,
+        }
+    }
 }
 
 fn is_paused(app: &AppHandle) -> bool {
