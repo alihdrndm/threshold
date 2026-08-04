@@ -38,6 +38,13 @@ pub struct NewIntention {
     pub categories: Option<String>,
     pub trigger: Option<String>,
     pub outcome: Outcome,
+    /// The task this intention came from, when it came from one.
+    ///
+    /// `serde(default)` so a frontend built before this field still starts a
+    /// ritual rather than failing at the boundary. Recording the intention is
+    /// the one thing that must not break.
+    #[serde(default)]
+    pub task_id: Option<i64>,
 }
 
 /// Read side is camelCase so the frontend does not have to translate; the write
@@ -54,13 +61,14 @@ pub struct IntentionRow {
     pub categories: Option<String>,
     pub trigger: Option<String>,
     pub outcome: String,
+    pub task_id: Option<i64>,
 }
 
 pub fn insert(conn: &Connection, intention: &NewIntention) -> Result<i64, String> {
     let ts = chrono::Utc::now().to_rfc3339();
     conn.execute(
-        "INSERT INTO intentions(ts, text, if_then, predicted_yes, duration_min, categories, trigger, outcome)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO intentions(ts, text, if_then, predicted_yes, duration_min, categories, trigger, outcome, task_id)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
             ts,
             intention.text,
@@ -70,6 +78,7 @@ pub fn insert(conn: &Connection, intention: &NewIntention) -> Result<i64, String
             intention.categories,
             intention.trigger,
             intention.outcome.as_str(),
+            intention.task_id,
         ],
     )
     .map_err(|err| format!("could not record intention: {err}"))?;
@@ -80,7 +89,7 @@ pub fn insert(conn: &Connection, intention: &NewIntention) -> Result<i64, String
 pub fn recent(conn: &Connection, limit: i64) -> Result<Vec<IntentionRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, ts, text, if_then, predicted_yes, duration_min, categories, trigger, outcome
+            "SELECT id, ts, text, if_then, predicted_yes, duration_min, categories, trigger, outcome, task_id
              FROM intentions ORDER BY ts DESC LIMIT ?1",
         )
         .map_err(|err| format!("could not read intentions: {err}"))?;
@@ -97,6 +106,7 @@ pub fn recent(conn: &Connection, limit: i64) -> Result<Vec<IntentionRow>, String
                 categories: row.get(6)?,
                 trigger: row.get(7)?,
                 outcome: row.get(8)?,
+                task_id: row.get(9)?,
             })
         })
         .map_err(|err| format!("could not read intentions: {err}"))?;
@@ -145,6 +155,7 @@ mod tests {
             categories: Some("social,video".into()),
             trigger: Some("boot".into()),
             outcome,
+            task_id: None,
         }
     }
 
@@ -184,6 +195,34 @@ mod tests {
     }
 
     #[test]
+    fn a_task_link_is_written_and_read_back() {
+        // `intentions.task_id` shipped in migration 2 and was then never written
+        // and never read - the app could not say which task a session was for.
+        // This is the test that keeps it alive.
+        let conn = memory_db();
+        conn.execute(
+            "INSERT INTO tasks(id, title, status) VALUES(7, 'create stripe account', 'open')",
+            [],
+        )
+        .unwrap();
+
+        let mut intention = sample(Outcome::Completed, "create stripe account");
+        intention.task_id = Some(7);
+        insert(&conn, &intention).unwrap();
+
+        assert_eq!(recent(&conn, 1).unwrap()[0].task_id, Some(7));
+    }
+
+    #[test]
+    fn an_intention_without_a_task_is_still_recorded() {
+        // Typed from scratch at boot, or picked from history: most intentions
+        // have no task behind them and must not require one.
+        let conn = memory_db();
+        insert(&conn, &sample(Outcome::Completed, "think")).unwrap();
+        assert_eq!(recent(&conn, 1).unwrap()[0].task_id, None);
+    }
+
+    #[test]
     fn the_honourable_exit_records_no_duration_and_no_blocks() {
         let conn = memory_db();
         let intention = NewIntention {
@@ -194,6 +233,7 @@ mod tests {
             categories: None,
             trigger: Some("wake".into()),
             outcome: Outcome::Browsing,
+            task_id: None,
         };
         insert(&conn, &intention).unwrap();
         let row = &recent(&conn, 1).unwrap()[0];

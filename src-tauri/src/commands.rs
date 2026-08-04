@@ -29,10 +29,21 @@ pub struct RitualResult {
 pub fn finish_ritual(
     app: tauri::AppHandle,
     db: State<'_, Db>,
-    intention: intentions::NewIntention,
+    mut intention: intentions::NewIntention,
 ) -> Result<RitualResult, String> {
     let id = {
         let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+
+        // Foreign keys are on, so an id that no longer resolves - the task was
+        // deleted while the ritual was open - would fail the insert. Losing the
+        // whole record over a link is the wrong trade: the intention is what
+        // matters, the link is an extra.
+        if let Some(task_id) = intention.task_id {
+            if tasks::title_of(&conn, task_id).is_err() {
+                intention.task_id = None;
+            }
+        }
+
         intentions::insert(&conn, &intention)?
     };
 
@@ -74,18 +85,37 @@ pub fn finish_ritual(
 /// the list with the ritual: at the vulnerable moment you are shown what
 /// matters instead of being asked to remember it. Recent intentions fill any
 /// remaining slots so the step is never empty on a fresh install.
+/// A chip on the intention step: the text, and the task behind it if there is
+/// one. Chips drawn from history have no task to point at.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Suggestion {
+    pub task_id: Option<i64>,
+    pub title: String,
+}
+
 #[tauri::command]
-pub fn intention_suggestions(db: State<'_, Db>) -> Result<Vec<String>, String> {
+pub fn intention_suggestions(db: State<'_, Db>) -> Result<Vec<Suggestion>, String> {
     let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
 
-    let mut chips = tasks::do_first_titles(&conn, 3)?;
+    let mut chips: Vec<Suggestion> = tasks::do_first(&conn, 3)?
+        .into_iter()
+        .map(|(task_id, title)| Suggestion {
+            task_id: Some(task_id),
+            title,
+        })
+        .collect();
+
     if chips.len() < 3 {
         for text in intentions::recent_texts(&conn, 3)? {
             if chips.len() >= 3 {
                 break;
             }
-            if !chips.contains(&text) {
-                chips.push(text);
+            if !chips.iter().any(|chip| chip.title == text) {
+                chips.push(Suggestion {
+                    task_id: None,
+                    title: text,
+                });
             }
         }
     }
@@ -142,7 +172,18 @@ pub struct FocusResult {
 ///
 /// Takes the task so the ritual can open with that intention already filled in
 /// — otherwise "Focus on this" is indistinguishable from "open the ritual".
-#[tauri::command]
+/// `async` is load-bearing, not decoration.
+///
+/// A synchronous command runs *on the main thread*, which is the thread the
+/// event loop needs in order to create a window and attach a WebView2 to it.
+/// Building the ritual from inside one leaves a half-made window: the Win32
+/// window exists, so it can be enumerated, but it never becomes visible and the
+/// code after the build never runs. That was "the Focus button does nothing" —
+/// every click created an invisible fullscreen window and stopped there.
+///
+/// Triggers were never affected: they arrive on the event loop rather than
+/// occupying it, which is why boot, wake and unlock always worked.
+#[tauri::command(async)]
 pub fn focus_on_task(
     app: tauri::AppHandle,
     db: State<'_, Db>,
@@ -153,7 +194,12 @@ pub fn focus_on_task(
         tasks::title_of(&conn, task_id)?
     };
 
-    match crate::triggers::request_with_intent(&app, title) {
+    let prefill = crate::popup::Prefill {
+        intent: Some(title),
+        task_id: Some(task_id),
+    };
+
+    match crate::triggers::request_focus(&app, prefill) {
         Ok(()) => Ok(FocusResult {
             opened: true,
             reason: None,

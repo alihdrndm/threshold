@@ -4,6 +4,7 @@ import {
   dismissPopup,
   finishRitual,
   intentionSuggestions,
+  type Suggestion,
   rememberCategories,
   rememberedCategories,
 } from "@/lib/tauri";
@@ -45,20 +46,32 @@ export function Ritual({ trigger }: { trigger: string }) {
 
   // "Focus on this" passes the task through, so the ritual opens already
   // knowing what you picked instead of asking again.
-  const presetIntent = useMemo(
-    () => new URLSearchParams(window.location.search).get("intent") ?? "",
-    [],
-  );
+  const preset = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    const task = Number(params.get("task"));
+    return {
+      intent: params.get("intent") ?? "",
+      // Number("") is 0 and Number(null) is 0, so a falsy check covers both a
+      // missing parameter and a malformed one.
+      taskId: Number.isFinite(task) && task > 0 ? task : null,
+    };
+  }, []);
 
-  const [step, setStep] = useState<StepId>(presetIntent ? "prediction" : "arrival");
-  const [text, setText] = useState(presetIntent);
+  const [step, setStep] = useState<StepId>(
+    preset.intent ? "prediction" : "arrival",
+  );
+  const [text, setText] = useState(preset.intent);
+  // Which task the finished record points at. Set by the Focus button, or by
+  // picking a chip that came from a task rather than from history. Cleared when
+  // the text is edited by hand, because the link would then be a guess.
+  const [taskId, setTaskId] = useState<number | null>(preset.taskId);
   const [blockProblem, setBlockProblem] = useState<string | null>(null);
   const [predictedYes, setPredictedYes] = useState<boolean | null>(null);
   const [ifThen, setIfThen] = useState<string>(IF_THEN_DEFAULTS[0]);
   const [customIfThen, setCustomIfThen] = useState("");
   const [duration, setDuration] = useState<number>(25);
   const [categories, setCategories] = useState<string[]>([]);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
   // The theme owns the palette; nothing below reads a raw colour.
   useEffect(() => {
@@ -99,6 +112,7 @@ export function Ritual({ trigger }: { trigger: string }) {
         categories: joined || null,
         trigger,
         outcome: "completed",
+        taskId,
       });
       if (result.block && !result.block.blocked) {
         setBlockProblem(result.block.reason ?? "The sites were not blocked.");
@@ -118,6 +132,10 @@ export function Ritual({ trigger }: { trigger: string }) {
       categories: null,
       trigger,
       outcome: "browsing",
+      // Kept even here. Which task you were holding when you chose to browse
+      // instead is exactly the kind of thing worth being able to look back on -
+      // as a record, never as a reproach.
+      taskId,
     });
   }
 
@@ -151,7 +169,12 @@ export function Ritual({ trigger }: { trigger: string }) {
               <Field
                 autoFocus
                 value={text}
-                onChange={setText}
+                onChange={(value) => {
+                  setText(value);
+                  // Typed over a chip: the text is no longer that task's, so
+                  // the link would be a guess.
+                  setTaskId(null);
+                }}
                 onSubmit={() => text.trim() && setStep("prediction")}
                 placeholder="One line is enough"
               />
@@ -161,14 +184,17 @@ export function Ritual({ trigger }: { trigger: string }) {
               <div className="flex flex-wrap justify-center gap-2">
                 {suggestions.map((suggestion) => (
                   <Pill
-                    key={suggestion}
-                    selected={text === suggestion}
+                    key={`${suggestion.taskId ?? "past"}-${suggestion.title}`}
+                    selected={text === suggestion.title}
                     onClick={() => {
-                      setText(suggestion);
+                      setText(suggestion.title);
+                      // Chips from the Do First quadrant carry their task;
+                      // chips from history have none to carry.
+                      setTaskId(suggestion.taskId);
                       setStep("prediction");
                     }}
                   >
-                    {suggestion}
+                    {suggestion.title}
                   </Pill>
                 ))}
               </div>

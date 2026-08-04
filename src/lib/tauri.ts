@@ -17,6 +17,8 @@ export interface NewIntention {
   categories: string | null;
   trigger: string | null;
   outcome: Outcome;
+  /** The task this came from, when it came from one. */
+  taskId: number | null;
 }
 
 export interface IntentionRow {
@@ -29,9 +31,16 @@ export interface IntentionRow {
   categories: string | null;
   trigger: string | null;
   outcome: string;
+  taskId: number | null;
 }
 
-/** Rust uses snake_case field names; convert at the boundary, not everywhere. */
+/**
+ * Rust uses snake_case field names; convert at the boundary, not everywhere.
+ *
+ * This list is written out by hand, which means a field added to `NewIntention`
+ * and forgotten here is dropped in transit with no type error anywhere. If you
+ * are adding one, you are in the right place.
+ */
 function toRust(intention: NewIntention) {
   return {
     text: intention.text,
@@ -41,6 +50,7 @@ function toRust(intention: NewIntention) {
     categories: intention.categories,
     trigger: intention.trigger,
     outcome: intention.outcome,
+    task_id: intention.taskId,
   };
 }
 
@@ -73,8 +83,14 @@ export function dismissPopup(): Promise<void> {
   return invoke<void>("dismiss_popup");
 }
 
-export function intentionSuggestions(): Promise<string[]> {
-  return invoke<string[]>("intention_suggestions");
+/** A chip on the intention step. `taskId` is null for chips drawn from history. */
+export interface Suggestion {
+  taskId: number | null;
+  title: string;
+}
+
+export function intentionSuggestions(): Promise<Suggestion[]> {
+  return invoke<Suggestion[]>("intention_suggestions");
 }
 
 export function recentIntentions(limit?: number): Promise<IntentionRow[]> {

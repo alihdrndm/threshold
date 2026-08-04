@@ -73,7 +73,7 @@ fn handle_system_event(app: &AppHandle, event: SystemEvent) {
 ///
 /// Returns the reason rather than swallowing it, so "Focus on this" can explain
 /// itself instead of looking broken.
-pub fn request_with_intent(app: &AppHandle, intent: String) -> Result<(), String> {
+pub fn request_focus(app: &AppHandle, prefill: crate::popup::Prefill) -> Result<(), String> {
     if is_paused(app) {
         return Err("Threshold is paused. Resume it in Settings to start a session.".into());
     }
@@ -82,7 +82,7 @@ pub fn request_with_intent(app: &AppHandle, intent: String) -> Result<(), String
     match with_state(|state| state.evaluate(TriggerKind::Manual, now)).unwrap_or(Decision::Show) {
         Decision::Show => {
             with_state(|state| state.mark_shown(now));
-            crate::popup::show_with_intent(app, TriggerKind::Manual, Some(intent)).map_err(|err| {
+            crate::popup::show_with_prefill(app, TriggerKind::Manual, prefill).map_err(|err| {
                 with_state(|state| state.forget_last_shown());
                 format!("could not open the ritual: {err}")
             })

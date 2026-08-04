@@ -234,13 +234,14 @@ pub fn handle_task_cli(args: &[String]) -> bool {
             Ok(rows) => {
                 for row in rows {
                     println!(
-                        "{} | {} | trigger={} | predicted_yes={:?} | {} min | blocks=[{}] | {}",
+                        "{} | {} | trigger={} | predicted_yes={:?} | {} min | blocks=[{}] | task={} | {}",
                         row.ts,
                         row.outcome,
                         row.trigger.as_deref().unwrap_or("-"),
                         row.predicted_yes,
                         row.duration_min.map(|d| d.to_string()).unwrap_or("-".into()),
                         row.categories.as_deref().unwrap_or(""),
+                        row.task_id.map(|id| id.to_string()).unwrap_or("-".into()),
                         row.text.as_deref().unwrap_or("(no text)"),
                     );
                 }
