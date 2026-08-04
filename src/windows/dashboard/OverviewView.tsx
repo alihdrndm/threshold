@@ -34,6 +34,7 @@ export function OverviewView() {
 
   const stats = useMemo(() => summarise(rows), [rows]);
   const calibration = useMemo(() => calibrate(sessions), [sessions]);
+  const reclaimed = useMemo(() => reclaimedMinutes(sessions), [sessions]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -61,7 +62,11 @@ export function OverviewView() {
               : undefined
           }
         />
-        <Stat label="Time reclaimed" value={formatMinutes(stats.reclaimedMin)} />
+        <Stat
+          label="Time reclaimed"
+          value={formatMinutes(reclaimed)}
+          note="in sessions you saw through"
+        />
         <Stat
           label="Sessions"
           value={`${stats.completed}/${stats.completed + stats.browsing}`}
@@ -173,6 +178,37 @@ function formatMinutes(total: number): string {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
+/**
+ * Minutes actually spent in sessions you saw through.
+ *
+ * Previously this summed the *committed* duration of every completed
+ * intention, so a ninety-minute session abandoned after five added ninety
+ * minutes to "time reclaimed". The number went up whenever you started
+ * something, which is the opposite of what it claims to measure.
+ *
+ * Elapsed time, and only for sessions you said you did or partly did. A
+ * session you walked away from is not reclaimed time — it is time we know
+ * nothing about, and guessing in the flattering direction is how a mirror
+ * turns into a trophy.
+ *
+ * Clamped to the committed length because that is when the clock stopped: a
+ * session answered an hour late did not run for an extra hour.
+ */
+export function reclaimedMinutes(sessions: SessionRecord[]): number {
+  const seconds = sessions
+    .filter(
+      (session) => session.state === "completed" || session.state === "partly",
+    )
+    .reduce((total, session) => {
+      if (session.endedTs === null) return total;
+      const elapsed = session.endedTs - session.startedTs;
+      const committed = session.durationMin * 60;
+      return total + Math.max(0, Math.min(elapsed, committed));
+    }, 0);
+
+  return Math.floor(seconds / 60);
+}
+
 export interface Calibration {
   /** Answered sessions where you predicted you would follow through. */
   said: number;
@@ -214,7 +250,6 @@ export function calibrate(sessions: SessionRecord[]): Calibration {
 interface Summary {
   streak: number;
   missedYesterday: boolean;
-  reclaimedMin: number;
   completed: number;
   browsing: number;
   drifted: number;
@@ -258,9 +293,6 @@ export function summarise(rows: IntentionRow[]): Summary {
   return {
     streak,
     missedYesterday,
-    reclaimedMin: rows
-      .filter((row) => row.outcome === "completed")
-      .reduce((total, row) => total + (row.durationMin ?? 0), 0),
     completed: rows.filter((row) => row.outcome === "completed").length,
     browsing: rows.filter((row) => row.outcome === "browsing").length,
     drifted: rows.filter((row) => row.outcome === "drifted").length,

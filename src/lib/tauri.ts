@@ -244,6 +244,9 @@ export function sessionStatus(): Promise<SessionStatus> {
  */
 export interface SessionRecord {
   startedTs: number;
+  /** When it actually stopped; null while it is still running. */
+  endedTs: number | null;
+  /** What was committed to — not what was spent. */
   durationMin: number;
   predictedYes: boolean | null;
   state:
