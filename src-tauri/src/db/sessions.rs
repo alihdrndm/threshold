@@ -259,6 +259,19 @@ pub fn answer(
     Ok(())
 }
 
+/// Recent sessions, newest first, for the Overview.
+pub fn recent(conn: &Connection, limit: i64) -> Result<Vec<SessionRow>, String> {
+    let sql = format!("SELECT {COLUMNS} FROM sessions ORDER BY started_ts DESC LIMIT ?1");
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|err| format!("could not read sessions: {err}"))?;
+    let rows = stmt
+        .query_map([limit], read)
+        .map_err(|err| format!("could not read sessions: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("could not read sessions: {err}"))
+}
+
 /// Every session left open by a run that ended without closing it.
 ///
 /// Rehydration must never trust "the row says running" — nothing closes a row

@@ -235,6 +235,32 @@ export function sessionStatus(): Promise<SessionStatus> {
   return invoke<SessionStatus>("session_status");
 }
 
+/**
+ * A finished session, for the Overview.
+ *
+ * `state` is the raw string on purpose: "unanswered" and "missed" must stay
+ * distinguishable, because walking away is not the same as saying no and
+ * folding them together would corrupt the only self-report this app collects.
+ */
+export interface SessionRecord {
+  startedTs: number;
+  durationMin: number;
+  predictedYes: boolean | null;
+  state:
+    | "running"
+    | "awaiting_checkin"
+    | "completed"
+    | "partly"
+    | "missed"
+    | "ended_early"
+    | "lapsed"
+    | "unanswered";
+}
+
+export function recentSessions(limit?: number): Promise<SessionRecord[]> {
+  return invoke<SessionRecord[]>("recent_sessions", { limit });
+}
+
 export interface EndSessionResult {
   /** Non-null means the sites stay blocked after the session ends. */
   blockHeldSecs: number | null;

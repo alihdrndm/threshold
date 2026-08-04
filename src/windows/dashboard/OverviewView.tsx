@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { dataLocation, recentIntentions, type IntentionRow } from "@/lib/tauri";
+import {
+  dataLocation,
+  recentIntentions,
+  recentSessions,
+  type IntentionRow,
+  type SessionRecord,
+} from "@/lib/tauri";
 
 /**
- * The dashboard (spec F4): one screen, four numbers, one list.
+ * The dashboard (spec F4): one screen, a few numbers, one list.
  *
  * Deliberately not a charting surface. Tracking on its own does not change
  * behaviour, so this is a mirror that supports the ritual rather than a product
@@ -10,6 +16,7 @@ import { dataLocation, recentIntentions, type IntentionRow } from "@/lib/tauri";
  */
 export function OverviewView() {
   const [rows, setRows] = useState<IntentionRow[]>([]);
+  const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [where, setWhere] = useState("");
   const [query, setQuery] = useState("");
 
@@ -17,12 +24,16 @@ export function OverviewView() {
     recentIntentions(200)
       .then(setRows)
       .catch(() => setRows([]));
+    recentSessions(200)
+      .then(setSessions)
+      .catch(() => setSessions([]));
     dataLocation()
       .then(setWhere)
       .catch(() => setWhere(""));
   }, []);
 
   const stats = useMemo(() => summarise(rows), [rows]);
+  const calibration = useMemo(() => calibrate(sessions), [sessions]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -36,7 +47,10 @@ export function OverviewView() {
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-auto p-8">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      {/* Five across only when there is room for it. The window may be as
+          narrow as 880, where five tiles would crush "Time reclaimed" into two
+          lines and leave the notes wrapping three deep. */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <Stat
           label="Streak"
           value={stats.streak === 0 ? "—" : `${stats.streak}d`}
@@ -54,6 +68,22 @@ export function OverviewView() {
           note="completed vs just browsing"
         />
         <Stat label="Drift" value={String(stats.drifted)} />
+        {/* The one number that closes a loop rather than counting one. Every
+            ritual has asked whether you would follow through; until the check-in
+            existed, nothing ever compared the answer to what happened. */}
+        <Stat
+          label="Follow-through"
+          value={
+            calibration.said === 0
+              ? "—"
+              : `${calibration.kept} of ${calibration.said}`
+          }
+          note={
+            calibration.said === 0
+              ? "once a few sessions have been answered"
+              : "of the times you said you would"
+          }
+        />
       </div>
 
       <section className="flex min-h-0 flex-1 flex-col gap-3">
@@ -141,6 +171,44 @@ function formatMinutes(total: number): string {
   const hours = Math.floor(total / 60);
   const minutes = total % 60;
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+export interface Calibration {
+  /** Answered sessions where you predicted you would follow through. */
+  said: number;
+  /** Of those, the ones you said you did. */
+  kept: number;
+}
+
+/**
+ * How often an optimistic prediction turned out to be right.
+ *
+ * Only *answered* sessions count. A session you walked away from is not a
+ * failure, it is an absence of data, and counting silence as a "no" would make
+ * the number say something nobody said — which is the whole reason `unanswered`
+ * is a separate state from `missed`.
+ *
+ * Reported as two counts rather than a percentage. "3 of 4" is honest at any
+ * size; "75%" implies a precision that four sessions cannot support, and a
+ * percentage invites a target, which turns a mirror into a scoreboard.
+ *
+ * "Partly" is not counted as kept. It is its own answer, and quietly promoting
+ * it would make the number flattering rather than useful — the point is to find
+ * out whether your predictions can be trusted, not to have them look good.
+ */
+export function calibrate(sessions: SessionRecord[]): Calibration {
+  const answered = sessions.filter(
+    (session) =>
+      session.predictedYes === true &&
+      (session.state === "completed" ||
+        session.state === "partly" ||
+        session.state === "missed"),
+  );
+
+  return {
+    said: answered.length,
+    kept: answered.filter((session) => session.state === "completed").length,
+  };
 }
 
 interface Summary {

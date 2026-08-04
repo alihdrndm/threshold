@@ -384,6 +384,37 @@ pub fn session_status(db: State<'_, Db>) -> Result<SessionStatus, String> {
     })
 }
 
+/// A finished session, as the Overview reads it.
+///
+/// Trimmed to what a summary needs. `state` travels as the raw string so the
+/// frontend can tell an unanswered session from a "no" — the distinction the
+/// whole check-in depends on, and the one a boolean would destroy.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRecord {
+    pub started_ts: i64,
+    pub duration_min: i64,
+    pub predicted_yes: Option<bool>,
+    pub state: String,
+}
+
+#[tauri::command]
+pub fn recent_sessions(
+    db: State<'_, Db>,
+    limit: Option<i64>,
+) -> Result<Vec<SessionRecord>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    Ok(sessions::recent(&conn, limit.unwrap_or(200))?
+        .into_iter()
+        .map(|row| SessionRecord {
+            started_ts: row.started_ts,
+            duration_min: row.duration_min,
+            predicted_yes: row.predicted_yes,
+            state: row.state.as_str().to_string(),
+        })
+        .collect())
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EndSessionResult {
