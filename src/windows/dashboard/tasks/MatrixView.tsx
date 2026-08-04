@@ -24,13 +24,18 @@ function Zone({
     tasks.filter((t) => t.status === "open").length > DO_FIRST_SOFT_CAP;
 
   return (
+    // Colour comes from CSS keyed on data-zone, not from a class here. Two
+    // background utilities in one string resolve by stylesheet order rather
+    // than string order, so a per-quadrant fill and a drag-over fill would
+    // fight unpredictably. Custom properties compose through the cascade
+    // instead, which is what lets drag-over layer on top of the quadrant's
+    // identity rather than replacing it.
     <section
       ref={setNodeRef}
+      data-zone={quadrant.id}
+      data-over={isOver || undefined}
       className={clsx(
-        "flex min-h-40 flex-col gap-2 rounded-2xl border p-4 transition-colors duration-150",
-        isOver
-          ? "border-[var(--color-accent)] bg-[var(--color-accent)]/[0.06]"
-          : "border-[var(--color-border-subtle)] bg-white/[0.015]",
+        "matrix-zone flex min-h-40 flex-col gap-2 rounded-2xl border p-4",
         className,
       )}
     >
@@ -38,7 +43,7 @@ function Zone({
         <h3 className="text-sm font-medium text-[var(--color-ink)]">
           {quadrant.label}
         </h3>
-        <span className="text-xs text-[var(--color-ink-muted)]">
+        <span className="text-xs text-[var(--zone-ink-muted)]">
           {quadrant.hint}
         </span>
       </header>
@@ -58,14 +63,19 @@ function Zone({
 
       {/* Calm, inline, and not a warning. Four "do first" tasks is a real
           problem, but red text about it would just teach you to ignore red. */}
+      {/* Emphasised by contrast rather than by colour — which is the whole
+          point of the note above: legible, not loud. */}
       {overCap && (
-        <p className="mt-1 text-xs text-[var(--color-ink-muted)]">
+        <p className="mt-1 text-xs text-[var(--color-ink)]">
           Four things cannot all be first. Move one?
         </p>
       )}
 
+      {/* mt-1, not mt-auto: against a full-height rail the hint would otherwise
+          drift far from the header it belongs to. Full strength, because the
+          size already does the de-emphasis and 60% opacity fails contrast. */}
       {tasks.length === 0 && (
-        <p className="mt-auto text-xs text-[var(--color-ink-muted)]/60">
+        <p className="mt-1 text-xs text-[var(--zone-ink-muted)]">
           Drop a task here
         </p>
       )}
@@ -102,9 +112,11 @@ export function MatrixView({
           tasks={inQuadrant(INBOX)}
           onToggleDone={onToggleDone}
           onFocus={onFocus}
-          className="w-56 shrink-0"
+          className="w-64 shrink-0"
         />
-        <div className="grid flex-1 grid-cols-2 gap-4">
+        {/* auto-rows-fr keeps the 2x2 a true 2x2: with solid fills, rows of
+            different heights read as a broken layout rather than as content. */}
+        <div className="grid flex-1 auto-rows-fr grid-cols-2 gap-4">
           {QUADRANTS.map((quadrant) => (
             <Zone
               key={quadrant.id}
@@ -136,8 +148,14 @@ export function DoneToday({
   if (tasks.length === 0) return null;
 
   return (
-    <section className="flex flex-col gap-2 rounded-2xl border border-[var(--color-border-subtle)] p-4">
-      <h3 className="text-sm font-medium text-[var(--color-ink-muted)]">
+    // The same machinery as a quadrant, with the quietest fill on the page.
+    // A bare transparent box beneath five coloured ones reads as unfinished,
+    // but finished work should not be rewarded with emphasis either.
+    <section
+      data-zone="done"
+      className="matrix-zone flex flex-col gap-2 rounded-2xl border p-4"
+    >
+      <h3 className="text-sm font-medium text-[var(--zone-ink-muted)]">
         Done today · {tasks.length}
       </h3>
       <div className="flex flex-col gap-2">

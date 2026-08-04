@@ -168,7 +168,7 @@ export function TasksView() {
           if (event.key === "Enter") run(() => submitDraft());
         }}
         placeholder="Add a task"
-        className="ritual-field w-full rounded-full border border-[var(--color-border-subtle)] bg-white/[0.03] px-5 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)]/60 focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+        className="ritual-field w-full rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-5 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
       />
 
       {error && (
@@ -205,7 +205,7 @@ export function TasksView() {
             target underneath stays readable. */}
         <DragOverlay>
           {dragging && (
-            <div className="rounded-xl border border-[var(--color-accent)] bg-[var(--color-surface-raised)] px-3 py-2.5 text-sm shadow-lg">
+            <div className="matrix-drag-overlay rounded-xl px-3 py-2.5 text-sm">
               {dragging.title}
             </div>
           )}
@@ -294,7 +294,7 @@ function Segmented({
           className={clsx(
             "rounded-full px-4 py-1.5 text-sm capitalize transition-colors duration-150",
             value === option
-              ? "bg-white/10 text-[var(--color-ink)]"
+              ? "bg-[var(--color-fill-selected)] text-[var(--color-ink)]"
               : "text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
           )}
         >

@@ -55,6 +55,7 @@ pub fn run() {
             commands::set_setting,
             commands::diagnostics,
             commands::repair_helper,
+            commands::set_window_theme,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -262,11 +263,30 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
         return;
     }
 
+    // The document's own colours are handled by the bootstrap in index.html;
+    // this is only the native chrome around them. `None` means follow Windows,
+    // which is also what leaves prefers-color-scheme free for the frontend.
+    let theme = app
+        .try_state::<db::Db>()
+        .and_then(|state| {
+            state
+                .0
+                .lock()
+                .ok()
+                .and_then(|conn| db::get_setting(&conn, "appearance"))
+        })
+        .and_then(|value| match value.as_str() {
+            "light" => Some(tauri::Theme::Light),
+            "dark" => Some(tauri::Theme::Dark),
+            _ => None,
+        });
+
     let built = tauri::WebviewWindowBuilder::new(
         app,
         "main",
         tauri::WebviewUrl::App("index.html".into()),
     )
+    .theme(theme)
     .title("Threshold")
     .inner_size(1180.0, 780.0)
     .min_inner_size(880.0, 600.0)

@@ -25,17 +25,21 @@ export function TaskCard({
   const done = task.status === "done";
 
   return (
+    // The card derives its surface from the zone it sits in (--zone-bg), so it
+    // needs no knowledge of quadrants and still works in the list view via the
+    // :root fallback. Dragging and done are attributes rather than opacity:
+    // fading a card over a coloured zone smears the hue through it and reads
+    // differently in every quadrant.
     <div
       ref={setNodeRef}
+      data-dragging={isDragging || undefined}
+      data-done={done || undefined}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
       }}
       className={clsx(
-        "group flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm",
-        "border-[var(--color-border-subtle)] bg-white/[0.03]",
-        isDragging && "opacity-60",
-        done && "opacity-45",
+        "matrix-card group flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm",
       )}
     >
       <button
@@ -46,7 +50,10 @@ export function TaskCard({
           "grid size-[18px] shrink-0 place-items-center rounded-full border transition-colors duration-150",
           done
             ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20"
-            : "border-[var(--color-ink-muted)]/50 hover:border-[var(--color-accent)]",
+            : // Muted ink at 50% measures 2.11:1 on a Do First card — under the
+              // 3:1 a control boundary needs. Derived from the zone's own muted
+              // ink instead, which clears it on every quadrant.
+              "border-[color-mix(in_srgb,var(--zone-ink-muted)_70%,transparent)] hover:border-[var(--color-accent)]",
         )}
       >
         {done && (
@@ -73,7 +80,7 @@ export function TaskCard({
         {...listeners}
         className={clsx(
           "min-w-0 flex-1 cursor-grab truncate active:cursor-grabbing",
-          done && "line-through",
+          done && "text-[var(--zone-ink-muted)] line-through",
         )}
       >
         {task.title}
@@ -85,7 +92,9 @@ export function TaskCard({
         <button
           type="button"
           onClick={() => onFocus(task)}
-          className="ritual-pressable shrink-0 rounded-full border border-[var(--color-border-subtle)] px-2.5 py-1 text-xs text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]"
+          // Border derived from ink rather than the white-alpha token, which is
+          // invisible in light mode and near-invisible on a tinted card.
+          className="ritual-pressable shrink-0 rounded-full border border-[color-mix(in_srgb,var(--color-ink)_16%,transparent)] px-2.5 py-1 text-xs text-[var(--zone-ink-muted)] hover:text-[var(--color-ink)]"
         >
           Focus
         </button>

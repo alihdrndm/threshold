@@ -90,6 +90,9 @@ fn build(app: &AppHandle, kind: TriggerKind, intent: Option<String>) -> tauri::R
         ),
     )
     .title("Threshold")
+    // Pinned dark at the native layer too, so the range track and scrollbar
+    // chrome are right in the very first frame even on a light-themed Windows.
+    .theme(Some(tauri::Theme::Dark))
     .decorations(false)
     .always_on_top(true)
     .skip_taskbar(true)

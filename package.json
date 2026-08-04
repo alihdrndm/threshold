@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "check": "tsc --noEmit && eslint src",
+    "check": "tsc --noEmit && eslint src && node scripts/check-tokens.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

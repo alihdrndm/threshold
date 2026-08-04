@@ -1,9 +1,36 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Threshold</title>
+    <script>
+      // Runs before the first paint, which is the entire point: the dashboard
+      // must never show a dark frame on its way to light, or the reverse.
+      //
+      // localStorage mirrors the `appearance` row in SQLite, which stays
+      // authoritative. Settings arrive over async IPC that does not exist yet
+      // at this moment, so the mirror is the only thing available this early.
+      // The default is "system", and "system" needs no storage at all, so a
+      // cold first launch is correct without one.
+      //
+      // Deliberately opt-in rather than opt-out: the attribute is written only
+      // when we know this is the dashboard. The ritual sets its own theme in a
+      // React effect long after first paint, so an exclude-later approach would
+      // flash light on every trigger.
+      (function () {
+        var params = new URLSearchParams(location.search);
+        if (params.has("trigger")) return;
+        if ((params.get("window") || "main").indexOf("popup") === 0) return;
+
+        var preference = localStorage.getItem("appearance") || "system";
+        var dark =
+          preference === "system"
+            ? matchMedia("(prefers-color-scheme: dark)").matches
+            : preference !== "light";
+        document.documentElement.dataset.appearance = dark ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

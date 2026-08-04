@@ -174,6 +174,24 @@ pub fn diagnostics(db: State<'_, Db>) -> Result<crate::diagnostics::Diagnostics,
     Ok(crate::diagnostics::diagnostics_with_pause(paused))
 }
 
+/// Keep the native titlebar in step with the chosen appearance.
+///
+/// `None` means follow Windows, which also restores the webview's automatic
+/// colour scheme — so a "system" preference keeps tracking live OS changes
+/// through `prefers-color-scheme`. The two mechanisms are never both in play,
+/// which is why they cannot disagree.
+#[tauri::command]
+pub fn set_window_theme(app: tauri::AppHandle, theme: Option<String>) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let _ = window.set_theme(match theme.as_deref() {
+        Some("light") => Some(tauri::Theme::Light),
+        Some("dark") => Some(tauri::Theme::Dark),
+        _ => None,
+    });
+}
+
 /// Re-register the elevated helper, prompting for administrator rights.
 ///
 /// The one repair the user cannot perform from inside the app, surfaced as a
