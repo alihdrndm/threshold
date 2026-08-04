@@ -39,9 +39,19 @@ pub enum Decision {
     NotAwayLongEnough,
 }
 
+/// How long after a wake an unlock still counts as the same return.
+///
+/// A machine woken at the lock screen cannot display anything: the ritual is
+/// created behind the lock and never seen. The unlock moments later is the
+/// first opportunity the user actually has, so it is allowed through rather
+/// than dismissed as a duplicate. Longer than this and they are two separate
+/// returns.
+pub const WAKE_HANDOVER: Duration = Duration::from_secs(180);
+
 #[derive(Debug)]
 pub struct TriggerState {
     last_shown: Option<Instant>,
+    last_kind: Option<TriggerKind>,
     locked_at: Option<Instant>,
     session_until: Option<Instant>,
     lock_threshold: Duration,
@@ -51,6 +61,7 @@ impl Default for TriggerState {
     fn default() -> Self {
         Self {
             last_shown: None,
+            last_kind: None,
             locked_at: None,
             session_until: None,
             lock_threshold: DEFAULT_LOCK_THRESHOLD,
@@ -68,6 +79,17 @@ impl TriggerState {
 
     pub fn mark_locked(&mut self, now: Instant) {
         self.locked_at = Some(now);
+    }
+
+    /// Undo `mark_shown`, for a ritual that was recorded and then never
+    /// appeared. A prompt nobody saw must not count as a prompt.
+    pub fn forget_last_shown(&mut self) {
+        self.last_shown = None;
+    }
+
+    pub fn mark_shown_for(&mut self, kind: TriggerKind, now: Instant) {
+        self.last_kind = Some(kind);
+        self.mark_shown(now);
     }
 
     pub fn mark_shown(&mut self, now: Instant) {
@@ -100,7 +122,15 @@ impl TriggerState {
 
         if let Some(last) = self.last_shown {
             if now.duration_since(last) < MIN_GAP {
-                return Decision::TooSoon;
+                // One exception: an unlock shortly after a wake. The wake's
+                // ritual was built behind the lock screen and never seen, so
+                // this is the user's first real chance at it, not a duplicate.
+                let handing_over = kind == TriggerKind::Unlock
+                    && self.last_kind == Some(TriggerKind::Wake)
+                    && now.duration_since(last) < WAKE_HANDOVER;
+                if !handing_over {
+                    return Decision::TooSoon;
+                }
             }
         }
 

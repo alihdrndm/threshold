@@ -6,7 +6,7 @@ mod popup;
 mod session;
 mod startup;
 mod tray;
-mod triggers;
+pub mod triggers;
 
 use std::sync::Mutex;
 
@@ -93,7 +93,7 @@ pub fn run() {
         // is the exception - it is meant to be dismissed and rebuilt.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() != popup::POPUP_LABEL {
+                if !window.label().starts_with(popup::POPUP_LABEL) {
                     api.prevent_close();
                     let _ = window.hide();
                 }

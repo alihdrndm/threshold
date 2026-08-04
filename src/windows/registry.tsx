@@ -10,9 +10,12 @@ import { PopupWindow } from "./popup/PopupWindow";
  */
 const WINDOWS: Record<string, () => JSX.Element> = {
   main: DashboardWindow,
-  popup: PopupWindow,
 };
 
 export function resolveWindow(label: string): () => JSX.Element {
+  // Ritual windows carry a counter ("popup-3"): a window destroyed on the event
+  // loop keeps its label briefly, so each replacement takes a fresh one rather
+  // than waiting for its predecessor to let go.
+  if (label.startsWith("popup")) return PopupWindow;
   return WINDOWS[label] ?? DashboardWindow;
 }
