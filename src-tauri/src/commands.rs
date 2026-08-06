@@ -698,6 +698,57 @@ pub fn remember_sites(db: State<'_, Db>, sites: Vec<String>) -> Result<Vec<Strin
     Ok(good)
 }
 
+/// Every quote, for the Settings list.
+#[tauri::command]
+pub fn list_quotes(db: State<'_, Db>) -> Result<Vec<db::quotes::Quote>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    db::quotes::all(&conn)
+}
+
+#[tauri::command]
+pub fn add_quote(
+    db: State<'_, Db>,
+    text: String,
+    author: Option<String>,
+) -> Result<Vec<db::quotes::Quote>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    db::quotes::add(&conn, &text, author.as_deref())?;
+    db::quotes::all(&conn)
+}
+
+#[tauri::command]
+pub fn remove_quote(db: State<'_, Db>, id: i64) -> Result<Vec<db::quotes::Quote>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    db::quotes::remove(&conn, id)?;
+    db::quotes::all(&conn)
+}
+
+/// The quote to show on a surface right now, or nothing.
+///
+/// Resolved here rather than in the window so both surfaces get the same
+/// shuffle rule, and so a ritual that opens with an empty reservoir simply has
+/// no quote in it instead of a placeholder nobody chose.
+#[tauri::command]
+pub fn quote_for(db: State<'_, Db>, surface: String) -> Result<Option<db::quotes::Quote>, String> {
+    let surface = db::quotes::Surface::parse(&surface)
+        .ok_or_else(|| format!("unknown surface: {surface}"))?;
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    db::quotes::for_surface(&conn, surface)
+}
+
+/// Pin a quote to a surface, or pass `null` to shuffle.
+#[tauri::command]
+pub fn choose_quote(db: State<'_, Db>, surface: String, id: Option<i64>) -> Result<(), String> {
+    let surface = db::quotes::Surface::parse(&surface)
+        .ok_or_else(|| format!("unknown surface: {surface}"))?;
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    db::set_setting(
+        &conn,
+        surface.setting(),
+        &id.map(|id| id.to_string()).unwrap_or_else(|| "shuffle".into()),
+    )
+}
+
 /// Check one typed site without saving it, so the field can answer immediately.
 ///
 /// Returns the tidied name, or the reason it cannot be blocked. The two live in

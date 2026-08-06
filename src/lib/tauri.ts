@@ -146,6 +146,50 @@ export function checkSite(site: string): Promise<string> {
   return invoke<string>("check_site", { site });
 }
 
+/**
+ * The quote reservoir: lines you keep, shown where you decide.
+ *
+ * The app's own copy is deliberately flat — nothing here congratulates you for
+ * stating an intention, because praise at that moment licenses the behaviour
+ * you were avoiding. That rule is about the *app* talking. A line you chose
+ * yourself is not the app talking, and at the moment of an urge something you
+ * already believe carries further than anything this program could think to say.
+ */
+export interface Quote {
+  id: number;
+  text: string;
+  author: string | null;
+}
+
+/** Where a quote is shown. The two are chosen independently. */
+export type QuoteSurface = "ritual" | "blocked";
+
+export function listQuotes(): Promise<Quote[]> {
+  return invoke<Quote[]>("list_quotes");
+}
+
+/** Returns the whole list as stored, so the UI never guesses at the result. */
+export function addQuote(text: string, author: string | null): Promise<Quote[]> {
+  return invoke<Quote[]>("add_quote", { text, author });
+}
+
+export function removeQuote(id: number): Promise<Quote[]> {
+  return invoke<Quote[]>("remove_quote", { id });
+}
+
+/** Null when the reservoir is empty — the surface then shows nothing at all. */
+export function quoteFor(surface: QuoteSurface): Promise<Quote | null> {
+  return invoke<Quote | null>("quote_for", { surface });
+}
+
+/** Pin a quote to a surface, or pass null to shuffle. */
+export function chooseQuote(
+  surface: QuoteSurface,
+  id: number | null,
+): Promise<void> {
+  return invoke<void>("choose_quote", { surface, id });
+}
+
 export function dataLocation(): Promise<string> {
   return invoke<string>("data_location");
 }
