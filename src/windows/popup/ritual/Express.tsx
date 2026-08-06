@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Theme } from "@/themes/types";
 import { CATEGORIES, DURATIONS, EXPRESS, IF_THEN_DEFAULTS } from "./copy";
 import { Eyebrow, Field, Hint, Pill, Question, Step } from "./Shell";
+import { Sites } from "./Sites";
 
 /**
  * One screen, because the decision is already made.
@@ -29,6 +30,8 @@ export function ExpressStep({
   onDuration,
   categories,
   onToggleCategory,
+  sites,
+  onSites,
   onStart,
 }: {
   theme: Theme;
@@ -43,6 +46,8 @@ export function ExpressStep({
   onDuration: (value: number) => void;
   categories: string[];
   onToggleCategory: (id: string) => void;
+  sites: string[];
+  onSites: (next: string[]) => void;
   onStart: () => void;
 }) {
   const [writing, setWriting] = useState(false);
@@ -130,7 +135,7 @@ export function ExpressStep({
         </div>
       </div>
 
-      <div className="flex flex-col items-center gap-2">
+      <div className="flex w-full flex-col items-center gap-2">
         <Hint>{EXPRESS.categories}</Hint>
         <div className="flex flex-wrap justify-center gap-2">
           {CATEGORIES.map((category) => (
@@ -145,6 +150,7 @@ export function ExpressStep({
             </Pill>
           ))}
         </div>
+        <Sites sites={sites} onChange={onSites} />
       </div>
 
       <Pill onClick={onStart} disabled={predictedYes === null}>
