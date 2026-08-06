@@ -59,7 +59,7 @@ impl BlockOutcome {
         }
     }
 
-    fn failed(reason: impl Into<String>) -> Self {
+    pub(crate) fn failed(reason: impl Into<String>) -> Self {
         Self {
             blocked: false,
             reason: Some(reason.into()),
@@ -242,8 +242,8 @@ fn rearm_refusal(lock: Option<&proto::Lock>, now: i64) -> Option<String> {
 }
 
 /// Ask the helper to block, then confirm it happened.
-pub fn arm(categories: &[String], duration_min: i64) -> BlockOutcome {
-    if categories.is_empty() || duration_min <= 0 {
+pub fn arm(categories: &[String], custom_hosts: &[String], duration_min: i64) -> BlockOutcome {
+    if (categories.is_empty() && custom_hosts.is_empty()) || duration_min <= 0 {
         return BlockOutcome::failed("nothing was selected to block");
     }
 
@@ -258,17 +258,37 @@ pub fn arm(categories: &[String], duration_min: i64) -> BlockOutcome {
         return BlockOutcome::failed(refusal);
     }
 
-    let until = chrono::Utc::now().timestamp() + duration_min * 60;
-    let request = proto::Request::block(categories.to_vec(), until);
+    let now = chrono::Utc::now().timestamp();
+    let until = now + duration_min * 60;
+    let request = proto::Request::block(categories.to_vec(), custom_hosts.to_vec(), until, now);
 
+    // Confirming that *a* block exists is not the same as confirming that the
+    // sites you named are in it. A helper too old to understand a field the app
+    // has started sending accepts the request and blocks only the part it
+    // recognises — `#[serde(default)]` guarantees it — and the marker check would
+    // call that a success. So wait for the block, then check the contents.
+    let wanted = custom_hosts.to_vec();
     match ask_helper(
         &request,
-        proto::hosts_has_block,
+        || proto::hosts_has_block() && proto::hosts_missing(&wanted).is_empty(),
         "The helper did not apply the block. Settings > Repair will re-register it; if that \
          does not help, Windows Defender may be protecting the hosts file.",
     ) {
         Ok(()) => BlockOutcome::ok(),
-        Err(reason) => BlockOutcome::failed(reason),
+        Err(reason) => {
+            // Distinguish "nothing happened" from "your own sites were dropped",
+            // because the second one looks like success from every other angle.
+            let missing = proto::hosts_missing(custom_hosts);
+            if proto::hosts_has_block() && !missing.is_empty() {
+                return BlockOutcome::failed(format!(
+                    "The block is on, but these sites were not included: {}. The blocking \
+                     helper is older than this version of Threshold — Settings > Repair will \
+                     replace it.",
+                    missing.join(", ")
+                ));
+            }
+            BlockOutcome::failed(reason)
+        }
     }
 }
 
@@ -286,9 +306,23 @@ pub fn lift() -> Result<(), String> {
     }
     ask_helper(
         &proto::Request::unblock(),
-        || !proto::hosts_has_block(),
+        released,
         "the helper did not lift the block; its own clock may still owe time",
     )
+}
+
+/// Is the block genuinely gone — hosts file *and* browser policy?
+///
+/// Deliberately not `!hosts_has_block()`. That was true when the hosts file
+/// could not be read at all, so a momentary read failure satisfied the very
+/// first poll and the app announced freedom it had not confirmed.
+///
+/// Browser policy is checked too, via the backup file the helper deletes only
+/// after reading the registry back. It is the layer that actually blocks a
+/// service worker, so leaving it in force while saying "the sites are open
+/// again" would reproduce the original complaint exactly.
+fn released() -> bool {
+    proto::hosts_confirmed_clear() && !proto::policy_applied()
 }
 
 /// Lift the block regardless of the time still owed.
@@ -308,7 +342,7 @@ pub fn emergency_unblock() -> Result<(), String> {
     }
     ask_helper(
         &proto::Request::emergency_unblock(),
-        || !proto::hosts_has_block(),
+        released,
         "the helper did not lift the block",
     )
 }
@@ -605,6 +639,7 @@ mod tests {
             armed_tick_ms: Some(1),
             duration_min: 25,
             categories: vec!["social".into()],
+            custom_hosts: Vec::new(),
         }
     }
 
@@ -620,14 +655,14 @@ mod tests {
 
     #[test]
     fn arming_nothing_is_refused_rather_than_reported_as_blocked() {
-        let outcome = arm(&[], 25);
+        let outcome = arm(&[], &[], 25);
         assert!(!outcome.blocked);
         assert!(outcome.reason.is_some());
     }
 
     #[test]
     fn arming_with_no_duration_is_refused() {
-        let outcome = arm(&["social".to_string()], 0);
+        let outcome = arm(&["social".to_string()], &[], 0);
         assert!(!outcome.blocked);
     }
 
@@ -638,6 +673,7 @@ mod tests {
             armed_tick_ms: Some(1_000),
             duration_min: 25,
             categories: vec!["social".into()],
+            custom_hosts: Vec::new(),
         }
     }
 
@@ -803,11 +839,17 @@ mod tests {
 
     #[test]
     fn a_request_round_trips_through_the_shared_contract() {
-        let request = proto::Request::block(vec!["social".into()], 1_800_000_000);
+        let request = proto::Request::block(
+            vec!["social".into()],
+            vec!["pinterest.com".into()],
+            1_800_000_000,
+            1_799_999_000,
+        );
         let encoded = serde_json::to_string(&request).unwrap();
         let decoded: proto::Request = proto::parse_json(&encoded).unwrap();
         assert_eq!(decoded.action, proto::Action::Block);
         assert_eq!(decoded.until, Some(1_800_000_000));
+        assert_eq!(decoded.custom_hosts, vec!["pinterest.com".to_string()]);
         assert!(!decoded.dry_run);
     }
 }

@@ -40,6 +40,7 @@ pub fn finish_ritual(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     mut intention: intentions::NewIntention,
+    custom_sites: Option<String>,
 ) -> Result<RitualResult, String> {
     let now = chrono::Utc::now().timestamp();
     let minutes = intention
@@ -55,6 +56,12 @@ pub fn finish_ritual(
         .filter(|c| !c.is_empty())
         .map(str::to_owned)
         .collect();
+
+    // Sites the user typed. Normalised again here rather than trusted from the
+    // window: the frontend is not a trust boundary, and the helper will refuse
+    // the whole request over one bad name — which would read as "blocking is
+    // broken" rather than "that one is not a web address".
+    let (custom, rejected) = split_sites(custom_sites.as_deref());
 
     let (id, session_id) = {
         let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
@@ -115,9 +122,16 @@ pub fn finish_ritual(
     // Arming is outside the transaction: it waits on an elevated process for up
     // to twelve seconds, and holding a database lock across that would freeze
     // every other reader.
-    let block = match (categories.is_empty(), minutes) {
+    let nothing_to_block = categories.is_empty() && custom.is_empty();
+    let block = match (nothing_to_block, minutes) {
+        // One unusable site name fails the block rather than being dropped in
+        // silence: a blocklist that quietly omits something is worse than one
+        // that says it could not.
+        (_, Some(_)) if !rejected.is_empty() => Some(crate::session::BlockOutcome::failed(
+            format!("This is not a web address: {}", rejected.join(", ")),
+        )),
         (false, Some(minutes)) => {
-            let outcome = crate::session::arm(&categories, minutes);
+            let outcome = crate::session::arm(&categories, &custom, minutes);
             if outcome.blocked {
                 if let (Some(session_id), Some(lock)) = (session_id, crate::session::active_lock())
                 {
@@ -343,6 +357,31 @@ pub struct SessionStatus {
     /// Present on its own after an upgrade mid-commitment, or when a block
     /// outlives the session that armed it.
     pub block_seconds: Option<i64>,
+}
+
+/// Split a saved site list into the ones we can block and the ones we cannot.
+///
+/// Normalising here as well as in the UI is not belt-and-braces for its own
+/// sake: the stored list outlives the window that wrote it, and a name that was
+/// acceptable to an older build must not reach an elevated process unchecked.
+pub fn split_sites(raw: Option<&str>) -> (Vec<String>, Vec<String>) {
+    let mut good = Vec::new();
+    let mut bad = Vec::new();
+
+    for piece in raw.unwrap_or_default().split(',') {
+        if piece.trim().is_empty() {
+            continue;
+        }
+        let host = threshold_protocol::normalise_host(piece);
+        match threshold_protocol::valid_hostname(&host) {
+            Ok(()) if !good.contains(&host) => good.push(host),
+            Ok(()) => {}
+            Err(_) => bad.push(piece.trim().to_string()),
+        }
+    }
+
+    good.truncate(threshold_protocol::MAX_CUSTOM_HOSTS);
+    (good, bad)
 }
 
 fn split_categories(raw: Option<&str>) -> Vec<String> {
@@ -636,6 +675,38 @@ pub fn remembered_categories(db: State<'_, Db>) -> Result<String, String> {
 pub fn remember_categories(db: State<'_, Db>, categories: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
     db::set_setting(&conn, "last_categories", &categories)
+}
+
+/// Sites the user added themselves, remembered the same way the toggles are.
+///
+/// Kept as a saved list rather than asked for each time: the three built-in
+/// categories are somebody else's idea of distraction, and the ones you typed
+/// are yours. Retyping them every session would be friction on exactly the part
+/// that makes the blocklist worth having.
+#[tauri::command]
+pub fn remembered_sites(db: State<'_, Db>) -> Result<Vec<String>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    let saved = db::get_setting(&conn, "custom_sites").unwrap_or_default();
+    Ok(split_sites(Some(&saved)).0)
+}
+
+#[tauri::command]
+pub fn remember_sites(db: State<'_, Db>, sites: Vec<String>) -> Result<Vec<String>, String> {
+    let (good, _) = split_sites(Some(&sites.join(",")));
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    db::set_setting(&conn, "custom_sites", &good.join(","))?;
+    Ok(good)
+}
+
+/// Check one typed site without saving it, so the field can answer immediately.
+///
+/// Returns the tidied name, or the reason it cannot be blocked. The two live in
+/// one command because the answer to "is this ok" is "here is what it becomes".
+#[tauri::command]
+pub fn check_site(site: String) -> Result<String, String> {
+    let host = threshold_protocol::normalise_host(&site);
+    threshold_protocol::valid_hostname(&host)?;
+    Ok(host)
 }
 
 #[tauri::command]

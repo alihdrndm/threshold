@@ -31,6 +31,26 @@ fn main() {
         }
     };
 
+    // Consume it. The request file is a single fixed path that used to survive
+    // being acted on, so anything that started this task again — Task Scheduler
+    // by hand, a dropped `/run` racing another — re-applied whatever it last
+    // held. For a block that meant a fresh `armed_at`: a brand new commitment
+    // stacked on top of an unblock the user had just performed.
+    //
+    // A dry run changes nothing by definition, so it leaves the file alone.
+    if !req.dry_run {
+        if let Err(err) = std::fs::remove_file(&path) {
+            eprintln!("threshold-helper: could not consume the request: {err}");
+            std::process::exit(2);
+        }
+    }
+
+    // Belt and braces for a request that outlived its moment some other way.
+    if let Err(err) = threshold_protocol::fresh_enough(&req, now_secs()) {
+        eprintln!("threshold-helper: {err}");
+        std::process::exit(2);
+    }
+
     match run(&req) {
         Ok(report) => {
             println!("{report}");
@@ -98,7 +118,8 @@ fn run(req: &Request) -> Result<String, String> {
 }
 
 fn block(req: &Request) -> Result<String, String> {
-    let targets = blocklist::hosts_for(&req.categories);
+    let targets = blocklist::hosts_for(&req.categories, &req.custom_hosts);
+    let apexes = blocklist::apexes_for(&req.categories, &req.custom_hosts);
     let unknown = blocklist::unknown_categories(&req.categories);
     let hosts_path = hosts::system_hosts();
     let existing = hosts::read(&hosts_path)?;
@@ -112,6 +133,7 @@ fn block(req: &Request) -> Result<String, String> {
         armed_tick_ms: Some(lock::tick_ms()),
         duration_min: ((until - armed_at) / 60).max(0),
         categories: req.categories.clone(),
+        custom_hosts: req.custom_hosts.clone(),
     };
 
     if req.dry_run {
@@ -120,24 +142,29 @@ fn block(req: &Request) -> Result<String, String> {
             &existing,
             &proposed,
             &targets,
+            &apexes,
             &unknown,
             Some(&new_lock),
             true,
         ));
     }
 
+    // The state directory has to exist and be locked down before anything is
+    // written into it, and the policy backup goes there.
+    secure_state_dir()?;
+
     hosts::write_atomic(&hosts_path, &proposed)?;
     policies::apply()?;
+    policies::apply_blocklist(&apexes)?;
     flush_dns();
 
-    secure_state_dir()?;
     std::fs::write(lock_path(), lock::render(&new_lock))
         .map_err(|err| format!("could not write lock: {err}"))?;
 
     Ok(format!(
-        "blocked {} hosts across {} categories until {}",
+        "blocked {} hosts and {} domains in browser policy, until {}",
         targets.len(),
-        req.categories.len(),
+        apexes.len(),
         until
     ))
 }
@@ -180,12 +207,23 @@ fn unblock(req: &Request, emergency: bool) -> Result<String, String> {
             &proposed,
             &[],
             &[],
+            &[],
             None,
             false,
         ));
     }
 
     hosts::write_atomic(&hosts_path, &proposed)?;
+
+    // Everything this app could have blocked, so a wiped state directory cannot
+    // leave browser policy stranded with no way to name what to remove. The
+    // custom sites are only knowable from the lock, which is exactly why they
+    // are recorded there.
+    let custom = match &current {
+        lock::Stored::Present(lock) => lock.custom_hosts.clone(),
+        _ => Vec::new(),
+    };
+    policies::remove_blocklist(&blocklist::every_apex(&custom))?;
     policies::remove()?;
     flush_dns();
     let _ = std::fs::remove_file(lock_path());
@@ -226,6 +264,7 @@ fn dry_run_report(
     existing: &str,
     proposed: &str,
     targets: &[String],
+    apexes: &[String],
     unknown: &[String],
     new_lock: Option<&lock::Lock>,
     applying_policies: bool,
@@ -261,7 +300,7 @@ fn dry_run_report(
     }
 
     out.push_str("\nregistry:\n");
-    for line in policies::describe() {
+    for line in policies::describe(apexes) {
         out.push_str(&format!(
             "  {} {line}\n",
             if applying_policies { "SET   " } else { "DELETE" }

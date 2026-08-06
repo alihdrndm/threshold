@@ -152,7 +152,11 @@ pub fn diagnostics_with_pause(paused_until: Option<i64>) -> Diagnostics {
         });
     }
 
-    let blocked_now = threshold_protocol::hosts_has_block();
+    let hosts = threshold_protocol::hosts_state();
+    let blocked_now = matches!(
+        hosts,
+        threshold_protocol::HostsState::Blocked(_) | threshold_protocol::HostsState::Orphaned(_)
+    );
     let lock = session::active_lock();
     checks.push(Check {
         name: "Current session".into(),
@@ -162,7 +166,12 @@ pub fn diagnostics_with_pause(paused_until: Option<i64>) -> Diagnostics {
                 "{} minutes committed, {} remaining, blocking [{}]",
                 lock.duration_min,
                 session::seconds_remaining(lock) / 60,
-                lock.categories.join(", ")
+                lock.categories
+                    .iter()
+                    .chain(lock.custom_hosts.iter())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             (None, true) => {
                 "hosts file is blocked but no lock exists - run --unblock-now to clear".into()
@@ -170,6 +179,53 @@ pub fn diagnostics_with_pause(paused_until: Option<i64>) -> Diagnostics {
             (None, false) => "none".into(),
         },
     });
+
+    // Entries with no intact marker around them. Nothing removes these on their
+    // own: the remover looks for an exact marker line and will not recognise
+    // them, so without this they stay in the hosts file forever while every
+    // other check reports the machine as unblocked.
+    if let threshold_protocol::HostsState::Orphaned(entries) = &hosts {
+        checks.push(Check {
+            name: "Hosts file".into(),
+            ok: false,
+            detail: format!(
+                "{} blocked entries have no Threshold marker around them, so nothing will \
+                 remove them - run --unblock-now to clear",
+                entries.len()
+            ),
+        });
+    }
+    if let threshold_protocol::HostsState::Unreadable(err) = &hosts {
+        checks.push(Check {
+            name: "Hosts file".into(),
+            ok: false,
+            detail: format!("could not be read, so blocking cannot be confirmed: {err}"),
+        });
+    }
+
+    // Browser policy left in force with no commitment behind it. This matters
+    // more than a stray hosts entry: it is invisible, it survives a reinstall,
+    // and no ordinary user could find it, let alone remove it.
+    let policy = threshold_protocol::policy_applied();
+    if policy && lock.is_none() {
+        checks.push(Check {
+            name: "Browser policy".into(),
+            ok: false,
+            detail: "sites are still blocked in the browser with no commitment behind it - \
+                     run --unblock-now to clear"
+                .into(),
+        });
+    } else {
+        checks.push(Check {
+            name: "Browser policy".into(),
+            ok: true,
+            detail: if policy {
+                "in force for the running commitment".into()
+            } else {
+                "none".into()
+            },
+        });
+    }
 
     let needs_repair = !helper_ok || !helper_present;
     let healthy = checks.iter().all(|check| check.ok);
