@@ -1,4 +1,5 @@
 import type { JSX } from "react";
+import { BlockedWindow } from "./blocked/BlockedWindow";
 import { CheckInWindow } from "./checkin/CheckInWindow";
 import { DashboardWindow } from "./dashboard/DashboardWindow";
 import { PopupWindow } from "./popup/PopupWindow";
@@ -14,6 +15,9 @@ import { PopupWindow } from "./popup/PopupWindow";
 const WINDOWS: Record<string, () => JSX.Element | null> = {
   main: DashboardWindow,
   checkin: CheckInWindow,
+  // Missing entries fall through to the dashboard below, which would render the
+  // whole thing inside a 420px corner window rather than failing visibly.
+  blocked: BlockedWindow,
 };
 
 export function resolveWindow(label: string): () => JSX.Element | null {
