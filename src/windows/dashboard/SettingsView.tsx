@@ -6,11 +6,14 @@ import {
   getSettings,
   pauseFor,
   pauseStatus,
+  rememberedSites,
+  rememberSites,
   repairHelper,
   resumeNow,
   setSetting,
   type Diagnostics,
 } from "@/lib/tauri";
+import { useSiteEditor } from "@/sites/useSiteEditor";
 import { CATEGORIES } from "../popup/ritual/copy";
 import type { Appearance } from "@/appearance";
 
@@ -33,12 +36,25 @@ export function SettingsView({
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [repair, setRepair] = useState<string | null>(null);
   const [unblock, setUnblock] = useState<string | null>(null);
+  const [sites, setSites] = useState<string[]>([]);
 
   async function refresh() {
     const pairs = await getSettings();
     setValues(Object.fromEntries(pairs));
     setPausedUntil(await pauseStatus());
     setDiagnostics(await getDiagnostics().catch(() => null));
+    setSites(await rememberedSites().catch(() => []));
+  }
+
+  // Saved as it changes rather than behind a Save button: everything else on
+  // this screen already works that way, and a list that needed confirming would
+  // be the one thing here you could lose by closing the window.
+  //
+  // The stored list is what comes back, not what was sent — Rust tidies and
+  // de-duplicates, and the chips should show what is actually kept.
+  async function saveSites(next: string[]) {
+    setSites(next);
+    setSites(await rememberSites(next).catch(() => next));
   }
 
   useEffect(() => {
@@ -91,7 +107,7 @@ export function SettingsView({
 
       <Section
         title="What gets quieted"
-        note="Your categories, not a verdict about the sites. A list someone else wrote gets ignored."
+        note="Your categories, not a verdict about the sites. A list someone else wrote gets ignored. Sites you add here are the same list the ritual offers, and changing it does not alter a block already running — that one holds to what it committed to."
       >
         <div className="flex flex-wrap gap-2">
           {CATEGORIES.map((category) => {
@@ -125,6 +141,8 @@ export function SettingsView({
             );
           })}
         </div>
+
+        <SiteList sites={sites} onChange={saveSites} />
       </Section>
 
       <Section
@@ -290,6 +308,73 @@ export function SettingsView({
           )}
         </div>
       </Section>
+    </div>
+  );
+}
+
+/**
+ * The blocklist's other half: sites you name yourself.
+ *
+ * Left-aligned and inline rather than centred like the ritual's version — this
+ * is a settings row among settings rows, and borrowing the ritual's composure
+ * here would make a list you edit look like a decision you are making.
+ */
+function SiteList({
+  sites,
+  onChange,
+}: {
+  sites: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const editor = useSiteEditor(sites, onChange);
+
+  return (
+    <div className="flex flex-col gap-2">
+      {sites.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {sites.map((site) => (
+            <button
+              key={site}
+              type="button"
+              onClick={() => editor.remove(site)}
+              aria-label={`Stop blocking ${site}`}
+              title="Remove"
+              className="ritual-pressable flex items-center gap-2 rounded-full border border-[var(--color-accent)] px-4 py-2 text-sm text-[var(--color-ink)]"
+            >
+              {site}
+              <span aria-hidden className="text-[var(--color-ink-muted)]">
+                ×
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <input
+          value={editor.typed}
+          onChange={(event) => editor.onType(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void editor.add();
+            }
+          }}
+          placeholder="Add a site — pinterest.com"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          aria-label="Add a site to block"
+          className="ritual-field w-64 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-2 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+        />
+        <Button onClick={() => void editor.add()}>Add</Button>
+      </div>
+
+      {editor.problem && (
+        <p role="alert" className="text-xs text-[var(--color-ink-muted)]">
+          {editor.problem}
+        </p>
+      )}
     </div>
   );
 }

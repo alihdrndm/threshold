@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { checkSite } from "@/lib/tauri";
+import { useSiteEditor } from "@/sites/useSiteEditor";
 
 /**
  * Sites the user names themselves, alongside the three built-in categories.
@@ -9,11 +8,7 @@ import { checkSite } from "@/lib/tauri";
  * stops being generic — which is the whole reason the category framing works:
  * what drives real reduction is people classifying their own distractions.
  *
- * The typed name is resolved by the Rust side before it becomes a chip, so the
- * chip shows what will actually be blocked rather than an echo of the typing.
- * `https://www.Pinterest.com/pin/12` becomes `pinterest.com`, and a name that
- * cannot be blocked says so at the moment it is typed rather than failing later
- * inside a ritual nobody wants to repeat.
+ * Same list Settings edits; whichever screen you are on, it is the one list.
  */
 export function Sites({
   sites,
@@ -22,27 +17,7 @@ export function Sites({
   sites: string[];
   onChange: (next: string[]) => void;
 }) {
-  const [typed, setTyped] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
-
-  async function add() {
-    const candidate = typed.trim();
-    if (!candidate || checking) return;
-
-    setChecking(true);
-    try {
-      const host = await checkSite(candidate);
-      // Already there is not an error — the chip below is the answer.
-      if (!sites.includes(host)) onChange([...sites, host]);
-      setTyped("");
-      setProblem(null);
-    } catch (reason) {
-      setProblem(String(reason));
-    } finally {
-      setChecking(false);
-    }
-  }
+  const editor = useSiteEditor(sites, onChange);
 
   return (
     <div className="flex w-full flex-col items-center gap-2">
@@ -52,7 +27,7 @@ export function Sites({
             <button
               key={site}
               type="button"
-              onClick={() => onChange(sites.filter((s) => s !== site))}
+              onClick={() => editor.remove(site)}
               aria-label={`Stop blocking ${site}`}
               title="Remove"
               className="ritual-pressable flex items-center gap-2 rounded-full border border-[var(--color-accent)] bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)] px-4 py-2 text-sm text-[var(--color-ink)] focus-visible:outline-2 focus-visible:outline-offset-[3px] focus-visible:outline-[var(--color-accent)]"
@@ -67,22 +42,17 @@ export function Sites({
       )}
 
       <input
-        value={typed}
-        onChange={(event) => {
-          setTyped(event.target.value);
-          // Clearing on the next keystroke: a refusal that outlives the thing it
-          // refused reads as the field being broken.
-          if (problem) setProblem(null);
-        }}
+        value={editor.typed}
+        onChange={(event) => editor.onType(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             event.preventDefault();
-            void add();
+            void editor.add();
           }
         }}
         // Typing a site and walking to the Start button should not silently drop
         // it, and this screen has no other submit for the field.
-        onBlur={() => void add()}
+        onBlur={() => void editor.add()}
         placeholder="Add a site — pinterest.com"
         spellCheck={false}
         autoCapitalize="off"
@@ -90,9 +60,9 @@ export function Sites({
         className="ritual-field w-64 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-5 py-2 text-center text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_65%,transparent)]"
       />
 
-      {problem && (
+      {editor.problem && (
         <p role="alert" className="text-center text-xs text-[var(--color-ink-muted)]">
-          {problem}
+          {editor.problem}
         </p>
       )}
     </div>
