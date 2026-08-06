@@ -21,13 +21,23 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  ; Ask the helper to lift any block while it still exists on disk.
-  CreateDirectory "C:\ProgramData\Threshold"
-  FileOpen $0 "C:\ProgramData\Threshold\request.json" w
-  FileWrite $0 '{"action":"emergency_unblock"}'
-  FileClose $0
-  nsExec::ExecToLog 'schtasks /run /tn "ThresholdHelper"'
-  Sleep 3000
+  ; Lift any block while both binaries still exist on disk.
+  ;
+  ; Through the app rather than by hand-writing a request, because the app waits
+  ; for the helper and reads the world back: hosts file clear *and* the browser
+  ; policy restored. Fire-and-forget was survivable when only the hosts file was
+  ; involved — a leftover line there can be fixed in Notepad. A leftover browser
+  ; policy cannot, so this path has to be the confirming one.
+  nsExec::ExecToLog '"$INSTDIR\threshold.exe" --unblock-now'
+
+  ; Belt to that braces: if the app could not run at all, ask the helper directly.
+  IfFileExists "C:\ProgramData\Threshold\state\policy-backup.json" 0 +7
+    CreateDirectory "C:\ProgramData\Threshold"
+    FileOpen $0 "C:\ProgramData\Threshold\request.json" w
+    FileWrite $0 '{"action":"emergency_unblock"}'
+    FileClose $0
+    nsExec::ExecToLog 'schtasks /run /tn "ThresholdHelper"'
+    Sleep 3000
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
@@ -43,10 +53,25 @@
   DeleteRegValue HKLM "SOFTWARE\Policies\Microsoft\Edge" "DnsOverHttpsMode"
   DeleteRegValue HKLM "SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS" "Enabled"
   DeleteRegValue HKLM "SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS" "Locked"
+  ; Site blocking. The helper restores these to whatever they held before
+  ; Threshold touched them, so by here they are either empty or somebody else's.
+  ; Only /ifempty is used deliberately: an organisation may manage URLBlocklist
+  ; on this machine, and deleting their entries because our own cleanup failed
+  ; would be far worse than leaving ours behind.
+  DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Google\Chrome\URLBlocklist"
+  DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Microsoft\Edge\URLBlocklist"
+  DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\BraveSoftware\Brave\URLBlocklist"
+  DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Vivaldi\URLBlocklist"
+  DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Mozilla\Firefox\WebsiteFilter\Block"
+  DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Mozilla\Firefox\WebsiteFilter"
+
   ; DeleteRegKey /ifempty removes these only when nothing else is left in them.
   DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Google\Chrome"
   DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Google"
   DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Microsoft\Edge"
+  DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\BraveSoftware\Brave"
+  DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\BraveSoftware"
+  DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Vivaldi"
   DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Mozilla\Firefox\DNSOverHTTPS"
   DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Mozilla\Firefox"
   DeleteRegKey /ifempty HKLM "SOFTWARE\Policies\Mozilla"

@@ -7,6 +7,8 @@ import {
   type Suggestion,
   rememberCategories,
   rememberedCategories,
+  rememberSites,
+  rememberedSites,
 } from "@/lib/tauri";
 import { themeById, themeFor } from "@/themes";
 import {
@@ -19,6 +21,7 @@ import {
   timeLabel,
 } from "./copy";
 import { ExpressStep } from "./Express";
+import { Sites } from "./Sites";
 import {
   Eyebrow,
   Field,
@@ -78,6 +81,7 @@ export function Ritual({ trigger }: { trigger: string }) {
   const [customIfThen, setCustomIfThen] = useState("");
   const [duration, setDuration] = useState<number>(25);
   const [categories, setCategories] = useState<string[]>([]);
+  const [sites, setSites] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
   // The theme owns the palette; nothing below reads a raw colour.
@@ -94,6 +98,11 @@ export function Ritual({ trigger }: { trigger: string }) {
         setCategories(saved ? saved.split(",").filter(Boolean) : []),
       )
       .catch(() => setCategories([]));
+    // Saved and already on, like the toggles: these are the user's own sites,
+    // and re-adding them every session would be friction on the useful half.
+    rememberedSites()
+      .then(setSites)
+      .catch(() => setSites([]));
   }, []);
 
   function toggleCategory(id: string) {
@@ -105,6 +114,7 @@ export function Ritual({ trigger }: { trigger: string }) {
   async function commit() {
     const joined = categories.join(",");
     await rememberCategories(joined).catch(() => {});
+    await rememberSites(sites).catch(() => {});
 
     // Express does not land on a confirmation screen: the banner in the
     // dashboard is the confirmation, and a second fullscreen beat after you
@@ -116,16 +126,19 @@ export function Ritual({ trigger }: { trigger: string }) {
     // block cannot be applied the user has to be told, on this screen, rather
     // than being assured their sites are blocked when they are not.
     try {
-      const result = await finishRitual({
-        text: text.trim() || null,
-        ifThen: customIfThen.trim() || ifThen,
-        predictedYes,
-        durationMin: duration,
-        categories: joined || null,
-        trigger,
-        outcome: "completed",
-        taskId,
-      });
+      const result = await finishRitual(
+        {
+          text: text.trim() || null,
+          ifThen: customIfThen.trim() || ifThen,
+          predictedYes,
+          durationMin: duration,
+          categories: joined || null,
+          trigger,
+          outcome: "completed",
+          taskId,
+        },
+        sites,
+      );
       if (result.block && !result.block.blocked) {
         setStep("confirm");
         setBlockProblem(result.block.reason ?? "The sites were not blocked.");
@@ -174,6 +187,8 @@ export function Ritual({ trigger }: { trigger: string }) {
             onDuration={setDuration}
             categories={categories}
             onToggleCategory={toggleCategory}
+            sites={sites}
+            onSites={setSites}
             onStart={() => void commit()}
           />
         )}
@@ -344,8 +359,8 @@ export function Ritual({ trigger }: { trigger: string }) {
               </div>
             )}
 
-            <div className="flex flex-col items-center gap-2">
-              <Hint>Quiet these while you work</Hint>
+            <div className="flex w-full flex-col items-center gap-3">
+              <Hint>{EXPRESS.categories}</Hint>
               <div className="flex flex-wrap justify-center gap-2">
                 {CATEGORIES.map((category) => (
                   <Pill
@@ -358,6 +373,7 @@ export function Ritual({ trigger }: { trigger: string }) {
                   </Pill>
                 ))}
               </div>
+              <Sites sites={sites} onChange={setSites} />
             </div>
 
             <Pill onClick={() => void commit()}>Set intention</Pill>

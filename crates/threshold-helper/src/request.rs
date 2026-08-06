@@ -80,12 +80,12 @@ mod tests {
     use super::*;
 
     fn block() -> Request {
-        Request {
-            action: Action::Block,
-            categories: vec!["social".into()],
-            until: Some(1_800_000_000),
-            dry_run: false,
-        }
+        Request::block(
+            vec!["social".into()],
+            vec![],
+            1_800_000_000,
+            1_799_999_000,
+        )
     }
 
     #[test]
@@ -116,12 +116,32 @@ mod tests {
 
     #[test]
     fn unblock_needs_neither_end_nor_categories() {
-        let request = Request {
-            action: Action::Unblock,
-            categories: vec![],
-            until: None,
-            dry_run: false,
-        };
+        assert!(validate(&Request::unblock()).is_ok());
+    }
+
+    /// The helper runs elevated and writes whatever passes into the hosts file
+    /// and the registry, so it re-checks a site name even though the app already
+    /// did. Trusting the caller is exactly what a privilege boundary is for.
+    #[test]
+    fn rejects_a_custom_site_that_is_not_a_plain_hostname() {
+        for smuggled in [
+            "../../windows",
+            "localhost",
+            "127.0.0.1",
+            "foo.com\n0.0.0.0 my-bank.com",
+            "foo.com/../..",
+        ] {
+            let mut request = block();
+            request.custom_hosts = vec![smuggled.into()];
+            assert!(validate(&request).is_err(), "{smuggled} should be refused");
+        }
+    }
+
+    #[test]
+    fn accepts_a_block_naming_only_custom_sites() {
+        let mut request = block();
+        request.categories.clear();
+        request.custom_hosts = vec!["pinterest.com".into()];
         assert!(validate(&request).is_ok());
     }
 

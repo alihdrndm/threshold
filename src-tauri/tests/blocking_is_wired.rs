@@ -13,7 +13,12 @@ use threshold_protocol as proto;
 /// one definition of it. When each kept its own copy, nothing forced them to.
 #[test]
 fn a_request_the_app_builds_passes_the_helpers_validator() {
-    let request = proto::Request::block(vec!["social".into(), "video".into()], 1_900_000_000);
+    let request = proto::Request::block(
+        vec!["social".into(), "video".into()],
+        vec!["pinterest.com".into()],
+        1_900_000_000,
+        1_899_999_000,
+    );
     proto::validate(&request).expect("the app must not build a request the helper rejects");
 
     let encoded = serde_json::to_string(&request).expect("encode");
@@ -21,6 +26,10 @@ fn a_request_the_app_builds_passes_the_helpers_validator() {
     proto::validate(&decoded).expect("survives a round trip through the file");
     assert_eq!(decoded.action, proto::Action::Block);
     assert_eq!(decoded.until, Some(1_900_000_000));
+    // The field that would vanish in transit if either side forgot it, taking
+    // the user's own sites with it and reporting success anyway.
+    assert_eq!(decoded.custom_hosts, vec!["pinterest.com".to_string()]);
+    assert_eq!(decoded.issued_at, Some(1_899_999_000));
 }
 
 #[test]
@@ -33,14 +42,18 @@ fn unblock_requests_are_valid_without_categories_or_an_end() {
 /// built rather than written to disk and silently discarded.
 #[test]
 fn an_incoherent_block_is_refused_before_it_is_ever_written() {
-    let mut request = proto::Request::block(vec![], 1_900_000_000);
-    assert!(proto::validate(&request).is_err(), "no categories");
+    let now = 1_899_999_000;
+    let mut request = proto::Request::block(vec![], vec![], 1_900_000_000, now);
+    assert!(proto::validate(&request).is_err(), "nothing to block");
 
-    request = proto::Request::block(vec!["social".into()], 0);
+    request = proto::Request::block(vec!["social".into()], vec![], 0, now);
     assert!(proto::validate(&request).is_err(), "no end time");
 
-    request = proto::Request::block(vec!["../../windows".into()], 1_900_000_000);
+    request = proto::Request::block(vec!["../../windows".into()], vec![], 1_900_000_000, now);
     assert!(proto::validate(&request).is_err(), "smuggled path");
+
+    request = proto::Request::block(vec![], vec!["../../windows".into()], 1_900_000_000, now);
+    assert!(proto::validate(&request).is_err(), "smuggled site");
 }
 
 /// The confirmation the app performs is a real read of the real file, so a
@@ -56,6 +69,26 @@ fn block_detection_reads_the_actual_hosts_file() {
         reported, actual,
         "hosts_has_block must reflect the file on disk, not an assumption"
     );
+}
+
+/// "Not blocked" and "could not tell" must never be the same answer.
+///
+/// They were: the check swallowed a read error as `false`, so a momentarily
+/// unreadable hosts file satisfied the unblock confirmation on its very first
+/// poll and the app announced that the sites were open again.
+#[test]
+fn a_hosts_file_we_cannot_read_is_not_reported_as_clear() {
+    if let proto::HostsState::Unreadable(_) = proto::hosts_state() {
+        assert!(!proto::hosts_confirmed_clear());
+    }
+    // And the two questions stay distinguishable in principle.
+    assert!(!matches!(
+        proto::parse_hosts("127.0.0.1 localhost\n"),
+        proto::HostsState::Unreadable(_)
+    ));
+    assert!(proto::hosts_confirmed_clear() != proto::hosts_has_block() || {
+        matches!(proto::hosts_state(), proto::HostsState::Unreadable(_))
+    });
 }
 
 /// Both binaries must resolve the same paths, or the app writes a request the

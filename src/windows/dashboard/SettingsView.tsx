@@ -6,11 +6,14 @@ import {
   getSettings,
   pauseFor,
   pauseStatus,
+  rememberedSites,
+  rememberSites,
   repairHelper,
   resumeNow,
   setSetting,
   type Diagnostics,
 } from "@/lib/tauri";
+import { useSiteEditor } from "@/sites/useSiteEditor";
 import { CATEGORIES } from "../popup/ritual/copy";
 import type { Appearance } from "@/appearance";
 
@@ -33,12 +36,25 @@ export function SettingsView({
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [repair, setRepair] = useState<string | null>(null);
   const [unblock, setUnblock] = useState<string | null>(null);
+  const [sites, setSites] = useState<string[]>([]);
 
   async function refresh() {
     const pairs = await getSettings();
     setValues(Object.fromEntries(pairs));
     setPausedUntil(await pauseStatus());
     setDiagnostics(await getDiagnostics().catch(() => null));
+    setSites(await rememberedSites().catch(() => []));
+  }
+
+  // Saved as it changes rather than behind a Save button: everything else on
+  // this screen already works that way, and a list that needed confirming would
+  // be the one thing here you could lose by closing the window.
+  //
+  // The stored list is what comes back, not what was sent — Rust tidies and
+  // de-duplicates, and the chips should show what is actually kept.
+  async function saveSites(next: string[]) {
+    setSites(next);
+    setSites(await rememberSites(next).catch(() => next));
   }
 
   useEffect(() => {
@@ -91,7 +107,7 @@ export function SettingsView({
 
       <Section
         title="What gets quieted"
-        note="Your categories, not a verdict about the sites. A list someone else wrote gets ignored."
+        note="Your categories, not a verdict about the sites. A list someone else wrote gets ignored. Sites you add here are the same list the ritual offers, and changing it does not alter a block already running — that one holds to what it committed to."
       >
         <div className="flex flex-wrap gap-2">
           {CATEGORIES.map((category) => {
@@ -125,6 +141,8 @@ export function SettingsView({
             );
           })}
         </div>
+
+        <SiteList sites={sites} onChange={saveSites} />
       </Section>
 
       <Section
@@ -242,9 +260,16 @@ export function SettingsView({
       <Section title="Browsers" note="">
         <p className="max-w-prose text-sm text-[var(--color-ink-muted)]">
           While a block is armed your browsers will say they are “managed by
-          your organization”. That is Threshold turning off DNS-over-HTTPS —
-          without it, blocking silently does nothing. It is removed the moment
-          the block lifts.
+          your organization”, and a blocked site shows the browser’s own
+          “blocked by your administrator” page. That is Threshold: it turns off
+          DNS-over-HTTPS and adds the sites to the browser’s blocklist. Both are
+          removed when the block lifts.
+        </p>
+        <p className="max-w-prose text-sm text-[var(--color-ink-muted)]">
+          The browser policy is what does the real work. Blocking by address
+          alone sits underneath the browser, and a site that keeps an offline
+          copy of itself — x.com is one — answers from that copy before any
+          address is looked up.
         </p>
       </Section>
 
@@ -261,7 +286,13 @@ export function SettingsView({
               setUnblock("Asking the helper…");
               try {
                 await emergencyUnblock();
-                setUnblock("Done — the sites are open again.");
+                // Only reached once the hosts file has been read back clear
+                // and the browser policy is confirmed gone. It used to be said
+                // unconditionally, which is how "unblocked" and "still blocked"
+                // came to look identical from here.
+                setUnblock(
+                  "Done — the sites are open again. A tab left open may need a reload.",
+                );
               } catch (err) {
                 setUnblock(err instanceof Error ? err.message : String(err));
               }
@@ -277,6 +308,73 @@ export function SettingsView({
           )}
         </div>
       </Section>
+    </div>
+  );
+}
+
+/**
+ * The blocklist's other half: sites you name yourself.
+ *
+ * Left-aligned and inline rather than centred like the ritual's version — this
+ * is a settings row among settings rows, and borrowing the ritual's composure
+ * here would make a list you edit look like a decision you are making.
+ */
+function SiteList({
+  sites,
+  onChange,
+}: {
+  sites: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const editor = useSiteEditor(sites, onChange);
+
+  return (
+    <div className="flex flex-col gap-2">
+      {sites.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {sites.map((site) => (
+            <button
+              key={site}
+              type="button"
+              onClick={() => editor.remove(site)}
+              aria-label={`Stop blocking ${site}`}
+              title="Remove"
+              className="ritual-pressable flex items-center gap-2 rounded-full border border-[var(--color-accent)] px-4 py-2 text-sm text-[var(--color-ink)]"
+            >
+              {site}
+              <span aria-hidden className="text-[var(--color-ink-muted)]">
+                ×
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <input
+          value={editor.typed}
+          onChange={(event) => editor.onType(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void editor.add();
+            }
+          }}
+          placeholder="Add a site — pinterest.com"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          aria-label="Add a site to block"
+          className="ritual-field w-64 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-2 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+        />
+        <Button onClick={() => void editor.add()}>Add</Button>
+      </div>
+
+      {editor.problem && (
+        <p role="alert" className="text-xs text-[var(--color-ink-muted)]">
+          {editor.problem}
+        </p>
+      )}
     </div>
   );
 }

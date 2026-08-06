@@ -41,6 +41,11 @@ pub struct Lock {
     /// Minutes committed to.
     pub duration_min: i64,
     pub categories: Vec<String>,
+    /// Sites the user named themselves. Recorded here because the seed list is
+    /// embedded and these are not: without them, an unblock after a restart
+    /// would have no idea what it was meant to be undoing.
+    #[serde(default)]
+    pub custom_hosts: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -164,6 +169,7 @@ mod tests {
             armed_tick_ms: Some(armed_tick_ms),
             duration_min,
             categories: vec!["social".into()],
+            custom_hosts: Vec::new(),
         })
     }
 
@@ -251,6 +257,7 @@ mod tests {
             armed_tick_ms: None,
             duration_min: 25,
             categories: vec![],
+            custom_hosts: Vec::new(),
         });
         match evaluate(&l, 1_000_000 - 60, 0) {
             Verdict::Held { .. } => {}

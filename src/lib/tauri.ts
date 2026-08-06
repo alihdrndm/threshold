@@ -75,9 +75,21 @@ export interface RitualResult {
   block: BlockOutcome | null;
 }
 
-/** Record the outcome, arm any block, and close. Every path through the popup ends here. */
-export function finishRitual(intention: NewIntention): Promise<RitualResult> {
-  return invoke<RitualResult>("finish_ritual", { intention: toRust(intention) });
+/**
+ * Record the outcome, arm any block, and close. Every path through the popup ends here.
+ *
+ * `customSites` rides alongside the intention rather than inside it: the
+ * intention is an append-only record of what was said, and the sites are a
+ * setting that outlives any one ritual.
+ */
+export function finishRitual(
+  intention: NewIntention,
+  customSites: string[] = [],
+): Promise<RitualResult> {
+  return invoke<RitualResult>("finish_ritual", {
+    intention: toRust(intention),
+    customSites: customSites.join(","),
+  });
 }
 
 /** Close the intention window. The honourable exit must never be more than this. */
@@ -105,6 +117,33 @@ export function rememberedCategories(): Promise<string> {
 
 export function rememberCategories(categories: string): Promise<void> {
   return invoke<void>("remember_categories", { categories });
+}
+
+/**
+ * Sites the user added themselves, remembered like the category toggles.
+ *
+ * The three built-in categories are somebody else's idea of distraction; these
+ * are theirs. Asking for them again every session would put the friction on
+ * exactly the part worth keeping.
+ */
+export function rememberedSites(): Promise<string[]> {
+  return invoke<string[]>("remembered_sites");
+}
+
+/** Returns the list as stored — tidied and de-duplicated, so the UI can trust it. */
+export function rememberSites(sites: string[]): Promise<string[]> {
+  return invoke<string[]>("remember_sites", { sites });
+}
+
+/**
+ * Tidy and check one typed site without saving it.
+ *
+ * Resolves to the name as it will actually be blocked (`https://www.X.com/a` →
+ * `x.com`), or rejects with the reason. Showing what it becomes matters as much
+ * as accepting it: the chip has to be the truth, not an echo of the typing.
+ */
+export function checkSite(site: string): Promise<string> {
+  return invoke<string>("check_site", { site });
 }
 
 export function dataLocation(): Promise<string> {
