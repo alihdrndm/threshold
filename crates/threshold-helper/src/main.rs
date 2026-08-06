@@ -282,8 +282,17 @@ fn dry_run_report(
 
     if !targets.is_empty() {
         out.push_str(&format!("  {} hosts would be blocked, e.g.\n", targets.len()));
-        for host in targets.iter().take(6) {
-            out.push_str(&format!("    0.0.0.0 {host}\n"));
+        // Quoted from what would actually be written, not re-formatted here.
+        // This used to print a hardcoded `0.0.0.0` prefix, so the report claimed
+        // an address the writer had stopped using - and a dry run that describes
+        // something other than the real change is worse than none, because the
+        // whole point of the mode is to be believed.
+        for line in proposed
+            .lines()
+            .filter(|line| line.trim_start().starts_with(threshold_protocol::SINK_IP))
+            .take(6)
+        {
+            out.push_str(&format!("    {line}\n"));
         }
         if targets.len() > 6 {
             out.push_str(&format!("    … and {} more\n", targets.len() - 6));
