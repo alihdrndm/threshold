@@ -287,16 +287,18 @@ export function SettingsView({
       <Section title="Browsers" note="">
         <p className="max-w-prose text-sm text-[var(--color-ink-muted)]">
           While a block is armed your browsers will say they are “managed by
-          your organization”, and a blocked site shows the browser’s own
-          “blocked by your administrator” page. That is Threshold: it turns off
-          DNS-over-HTTPS and adds the sites to the browser’s blocklist. Both are
-          removed when the block lifts.
+          your organization”. That is Threshold turning off DNS-over-HTTPS —
+          without it, blocking silently does nothing. It is removed when the
+          block lifts.
         </p>
         <p className="max-w-prose text-sm text-[var(--color-ink-muted)]">
-          The browser policy is what does the real work. Blocking by address
-          alone sits underneath the browser, and a site that keeps an offline
-          copy of itself — x.com is one — answers from that copy before any
-          address is looked up.
+          A blocked site fails with a plain connection error, and Threshold
+          answers in the corner with a quote you chose — the attempt lands on an
+          address this app is listening at, which is how it knows an urge
+          arrived. One honest caveat: a site you visited moments before the
+          block may keep working for up to a minute, and the reverse after it
+          lifts. Browsers remember addresses briefly, and that memory belongs to
+          them.
         </p>
       </Section>
 

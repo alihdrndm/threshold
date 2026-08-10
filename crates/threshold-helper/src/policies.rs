@@ -1,31 +1,27 @@
-//! Blocking at a layer the browser cannot cache its way around.
+//! Closing the DNS-over-HTTPS bypass.
 //!
-//! Two jobs, and the second one is why the engine works at all.
+//! Chromium browsers and Firefox resolve names over HTTPS to their own resolver
+//! and never consult the hosts file, so without this every entry we write is
+//! simply ignored. While a block is armed the browsers will report that they
+//! are "managed by your organization"; the keys are removed on full unblock,
+//! and the uninstaller removes them too.
 //!
-//! **Closing the DNS-over-HTTPS bypass.** Chrome and Edge resolve names over
-//! HTTPS to their own resolver and never consult the hosts file, so without this
-//! every entry we write is simply ignored.
+//! # Why there is no `URLBlocklist` here any more
 //!
-//! **Blocking the URL itself.** The hosts file sits *underneath* the browser,
-//! and things live above it. A site with a service worker — x.com is one —
-//! answers a navigation from its own cache before any name is resolved, so a
-//! null route never comes into it. The same gap runs the other way: when a block
-//! lifts, `ipconfig /flushdns` clears Windows' cache and cannot touch the
-//! browser's in-process resolver cache, its warm sockets, or its copy of these
-//! very policies, which is why unblocking used to appear not to work.
-//! `URLBlocklist` is enforced in the navigation path, above all of that, and a
-//! single apex entry covers every subdomain — so subdomains stop needing a
-//! hand-maintained list.
+//! There briefly was one, and it worked too well. Policy blocking is enforced
+//! in the navigation path, *inside* the browser — a blocked navigation never
+//! makes a connection at all. But blocked names resolve to a sink this app
+//! listens on, and the connection arriving there is what lets Threshold answer
+//! an urge with a line the user chose. The policy layer starved that signal:
+//! with it in force the wall could never fire from a browser, which is the only
+//! place it matters. Its one unique contribution was immediacy — it defeated
+//! the browser's own DNS cache in both directions — and that cache decays in
+//! about a minute, which is a price worth paying for the wall.
 //!
-//! The cost is visible and worth stating plainly in the UI: while a block is
-//! armed the browsers will report that they are "managed by your organization",
-//! and a blocked site shows the browser's own "blocked by your administrator"
-//! page rather than a connection error.
-//!
-//! These keys are removed on full unblock, and the uninstaller removes them too.
-//! That matters more here than it did for DoH alone: a stranded `URLBlocklist`
-//! is invisible, survives a reinstall, and cannot be fixed with Notepad. So
-//! removal is verified by reading back, never assumed.
+//! The blocklist *removal* machinery below is deliberately kept: blocks armed
+//! by the versions that wrote `URLBlocklist` are still out there, and a
+//! stranded entry is invisible, survives a reinstall, and cannot be fixed with
+//! Notepad. Removal is verified by reading back, never assumed.
 
 use std::collections::BTreeMap;
 
@@ -56,6 +52,11 @@ pub struct Policy {
 /// Never delete at or above this path, however empty it looks.
 pub const POLICIES_ROOT: &str = r"SOFTWARE\Policies";
 
+/// Brave and Vivaldi read the same Chromium policy under their own vendor keys.
+/// They were previously covered by the blocklist and nothing else, so removing
+/// it would have left them bypassing the hosts file entirely over DoH. Opera is
+/// deliberately absent — its policy path is not reliably documented, and a key
+/// that does nothing is worse than an honest gap.
 pub const POLICIES: &[Policy] = &[
     Policy {
         browser: "Chrome",
@@ -66,6 +67,18 @@ pub const POLICIES: &[Policy] = &[
     Policy {
         browser: "Edge",
         path: r"SOFTWARE\Policies\Microsoft\Edge",
+        name: "DnsOverHttpsMode",
+        value: Value::Off,
+    },
+    Policy {
+        browser: "Brave",
+        path: r"SOFTWARE\Policies\BraveSoftware\Brave",
+        name: "DnsOverHttpsMode",
+        value: Value::Off,
+    },
+    Policy {
+        browser: "Vivaldi",
+        path: r"SOFTWARE\Policies\Vivaldi",
         name: "DnsOverHttpsMode",
         value: Value::Off,
     },
@@ -95,10 +108,9 @@ pub struct Blocklist {
     pub style: PatternStyle,
 }
 
-/// Brave and Vivaldi are here because they were previously uncovered entirely:
-/// no DoH policy, no blocklist, so they walked straight past the whole engine.
-/// Opera is deliberately absent — its policy path is not reliably documented,
-/// and a key that does nothing is worse than an honest gap.
+/// Kept only so unblocking can clean up what earlier versions wrote. Nothing
+/// writes these any more — see the module note for why the blocklist and the
+/// wall could not coexist.
 pub const BLOCKLISTS: &[Blocklist] = &[
     Blocklist {
         browser: "Chrome",
@@ -138,24 +150,7 @@ pub fn pattern_for(apex: &str, style: PatternStyle) -> String {
 }
 
 /// Human-readable description of what applying these would do, for the dry run.
-pub fn describe(apexes: &[String]) -> Vec<String> {
-    let mut lines = describe_doh();
-    for list in BLOCKLISTS {
-        let sample = apexes
-            .first()
-            .map(|apex| pattern_for(apex, list.style))
-            .unwrap_or_else(|| "(nothing)".into());
-        lines.push(format!(
-            "HKLM\\{}\\1..{} = \"{sample}\", …   [{}]",
-            list.path,
-            apexes.len(),
-            list.browser
-        ));
-    }
-    lines
-}
-
-fn describe_doh() -> Vec<String> {
+pub fn describe() -> Vec<String> {
     POLICIES
         .iter()
         .map(|policy| match policy.value {
@@ -345,12 +340,11 @@ fn set_dword(key: HKEY, name: &str, value: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// Whatever was in the blocklist keys before Threshold ever touched them.
+/// Whatever was in the blocklist keys before the versions that wrote them.
 ///
-/// These keys are shared ground: an organisation may already manage `URLBlocklist`
-/// on this machine, and destroying their entries would be indefensible. So the
-/// original is snapshotted into the admin-only state directory on the first arm
-/// and restored verbatim on unblock.
+/// Nothing creates this file any more; a block armed by an older helper may
+/// have left one behind, and it is what tells that version's entries apart from
+/// an organisation's own.
 fn backup_path() -> std::path::PathBuf {
     threshold_protocol::policy_backup_path()
 }
@@ -360,48 +354,7 @@ fn load_backup() -> Option<BTreeMap<String, Vec<String>>> {
     threshold_protocol::parse_json(&raw).ok()
 }
 
-fn save_backup(snapshot: &BTreeMap<String, Vec<String>>) -> Result<(), String> {
-    let dir = threshold_protocol::state_dir();
-    std::fs::create_dir_all(&dir)
-        .map_err(|err| format!("could not create {}: {err}", dir.display()))?;
-    let body = serde_json::to_string_pretty(snapshot)
-        .map_err(|err| format!("could not encode the policy backup: {err}"))?;
-    std::fs::write(backup_path(), body)
-        .map_err(|err| format!("could not write the policy backup: {err}"))
-}
-
-/// Block these apexes in every browser we can reach.
-pub fn apply_blocklist(apexes: &[String]) -> Result<(), String> {
-    // Snapshot once and only once. A second arm must not record our own entries
-    // as somebody else's, or unblocking would restore the block.
-    let original = match load_backup() {
-        Some(saved) => saved,
-        None => {
-            let snapshot: BTreeMap<String, Vec<String>> = BLOCKLISTS
-                .iter()
-                .map(|list| (list.path.to_string(), read_list(list.path)))
-                .collect();
-            save_backup(&snapshot)?;
-            snapshot
-        }
-    };
-
-    for list in BLOCKLISTS {
-        let mut combined = original.get(list.path).cloned().unwrap_or_default();
-        for apex in apexes {
-            let pattern = pattern_for(apex, list.style);
-            if !combined.contains(&pattern) {
-                combined.push(pattern);
-            }
-        }
-        combined.truncate(MAX_LIST as usize);
-        write_list(list.path, &combined)?;
-    }
-
-    Ok(())
-}
-
-/// Put the blocklist keys back exactly as they were found.
+/// Put the blocklist keys back exactly as an older version found them.
 ///
 /// `known` is the fallback for the case where the snapshot is gone but entries
 /// are not — a wiped state directory. Without it those entries would be
@@ -629,9 +582,11 @@ mod tests {
     #[test]
     fn covers_every_browser_that_can_bypass_the_hosts_file() {
         let browsers: Vec<_> = POLICIES.iter().map(|p| p.browser).collect();
-        assert!(browsers.contains(&"Chrome"));
-        assert!(browsers.contains(&"Edge"));
-        assert!(browsers.contains(&"Firefox"));
+        // Brave and Vivaldi are load-bearing here: DoH-off is now their *only*
+        // coverage, and losing it would let them walk past the hosts file.
+        for browser in ["Chrome", "Edge", "Firefox", "Brave", "Vivaldi"] {
+            assert!(browsers.contains(&browser), "{browser} is uncovered");
+        }
     }
 
     /// Mirrors the walk in `remove()` so the stopping rule is testable without
@@ -665,33 +620,31 @@ mod tests {
 
     #[test]
     fn description_names_the_exact_keys_and_values() {
-        let described = describe(&["x.com".to_string()]).join("\n");
+        let described = describe().join("\n");
         assert!(described.contains(r"SOFTWARE\Policies\Google\Chrome\DnsOverHttpsMode"));
         assert!(described.contains("\"off\""));
         assert!(described.contains("Locked = 1"));
-        assert!(described.contains(r"SOFTWARE\Policies\Google\Chrome\URLBlocklist"));
+        // The blocklist is cleanup-only now. Describing it as something a block
+        // would SET is the dry run lying, which it has done once already.
+        assert!(!described.contains("URLBlocklist"));
     }
 
-    /// The whole reason policy blocking is here: x.com's service worker answers
-    /// a navigation before DNS is consulted, so one apex has to cover the lot.
+    /// Cleanup must still recognise what every writing version produced.
     #[test]
-    fn a_chromium_pattern_is_the_bare_apex_so_it_covers_every_subdomain() {
+    fn removal_patterns_match_what_older_versions_wrote() {
         assert_eq!(pattern_for("x.com", PatternStyle::Domain), "x.com");
-    }
-
-    #[test]
-    fn a_firefox_pattern_covers_the_apex_and_its_subdomains() {
         assert_eq!(
             pattern_for("x.com", PatternStyle::MatchPattern),
             "*://*.x.com/*"
         );
     }
 
+    /// Every key an older version could have written stays cleanable.
     #[test]
-    fn every_browser_that_can_bypass_the_hosts_file_has_a_blocklist_too() {
+    fn every_blocklist_a_previous_version_wrote_can_still_be_removed() {
         let browsers: Vec<_> = BLOCKLISTS.iter().map(|list| list.browser).collect();
         for browser in ["Chrome", "Edge", "Firefox", "Brave", "Vivaldi"] {
-            assert!(browsers.contains(&browser), "{browser} is uncovered");
+            assert!(browsers.contains(&browser), "{browser} cleanup dropped");
         }
     }
 
