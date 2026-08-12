@@ -47,13 +47,22 @@ function Zone({
         className,
       )}
     >
-      <header className="flex items-baseline justify-between gap-2">
-        <h3 className="text-sm font-medium text-[var(--color-ink)]">
+      {/* The tracked-caps vocabulary the list view already uses for group
+          headers, at full ink because a zone is a place, not a caption. The
+          hint is sr-only now: sighted readers get the same fact from the axis
+          labels around the grid, and saying it twice taught the eye to skip
+          both. The count is a mirror, not a meter — it appears only when
+          there is something to count. */}
+      <header className="flex items-baseline gap-2">
+        <h3 className="text-xs font-medium tracking-[0.18em] uppercase text-[var(--color-ink)]">
           {quadrant.label}
+          <span className="sr-only"> — {quadrant.hint}</span>
         </h3>
-        <span className="text-xs text-[var(--zone-ink-muted)]">
-          {quadrant.hint}
-        </span>
+        {tasks.length > 0 && (
+          <span className="text-xs text-[var(--zone-ink-muted)] tabular-nums">
+            {tasks.length}
+          </span>
+        )}
       </header>
 
       <SortableContext items={tasks.map((t) => t.id)} strategy={rectSortingStrategy}>
@@ -84,13 +93,43 @@ function Zone({
 
       {/* mt-1, not mt-auto: against a full-height rail the hint would otherwise
           drift far from the header it belongs to. Full strength, because the
-          size already does the de-emphasis and 60% opacity fails contrast. */}
+          size already does the de-emphasis and 60% opacity fails contrast.
+          The copy is the quadrant's own: an empty zone is the one moment its
+          meaning is worth a sentence, so the invitation carries it. */}
       {tasks.length === 0 && (
         <p className="mt-1 text-xs text-[var(--zone-ink-muted)]">
-          Drop a task here
+          {quadrant.empty}
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * One word on an axis, quieter and smaller than any zone header so the grid
+ * outranks its annotation. aria-hidden because the same fact reaches screen
+ * readers through each zone's sr-only hint — position is visual information,
+ * and this is its visual form.
+ */
+function AxisLabel({
+  children,
+  vertical = false,
+}: {
+  children: string;
+  vertical?: boolean;
+}) {
+  return (
+    <span
+      aria-hidden
+      className={clsx(
+        "place-self-center text-[11px] tracking-[0.22em] uppercase text-[var(--color-ink-muted)] select-none",
+        // vertical-rl then flipped, so the left axis reads bottom-to-top the
+        // way a y-axis caption does on any chart.
+        vertical && "rotate-180 [writing-mode:vertical-rl]",
+      )}
+    >
+      {children}
+    </span>
   );
 }
 
@@ -123,7 +162,26 @@ export function MatrixView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex gap-4">
+      {/* The axes are the restyle. A 2x2 whose position carries the meaning
+          should say so on the axes, once, instead of repeating it inside every
+          header — Urgent/Not urgent across the top, Important/Not important
+          down the side, and the quadrant hints retire to sr-only. QUADRANTS is
+          already laid out in axis order (urgent column first, important row
+          first), which is what lets the labels be true.
+
+          One grid for the whole board, not a rail beside a grid: the Inbox
+          spans the two quadrant rows so its top edge aligns with Do First
+          rather than with the label row — a tray sits beside the matrix, it
+          does not outrank its axes. 18rem for the rail: with a checkbox, a
+          Focus button and a delete control in a row, 256px left a title
+          roughly twelve characters before wrapping. The equal 1fr tracks keep
+          the 2x2 a true 2x2 — with solid fills, rows of different heights
+          read as a broken layout rather than as content. */}
+      <div className="grid grid-cols-[18rem_auto_minmax(0,1fr)_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-3">
+        <span />
+        <span />
+        <AxisLabel>Urgent</AxisLabel>
+        <AxisLabel>Not urgent</AxisLabel>
         <Zone
           quadrant={INBOX}
           tasks={inQuadrant(INBOX)}
@@ -132,28 +190,34 @@ export function MatrixView({
           onDelete={onDelete}
           activeTaskId={activeTaskId}
           sessionRunning={sessionRunning}
-          // w-72, not w-64: with a checkbox, a Focus button and a delete
-          // control in the row, 256px left a title roughly twelve characters
-          // before wrapping — the rail exists to *hold* unclassified tasks,
-          // so it gets the space to show them.
-          className="w-72 shrink-0"
+          className="row-span-2"
         />
-        {/* auto-rows-fr keeps the 2x2 a true 2x2: with solid fills, rows of
-            different heights read as a broken layout rather than as content. */}
-        <div className="grid flex-1 auto-rows-fr grid-cols-2 gap-4">
-          {QUADRANTS.map((quadrant) => (
-            <Zone
-              key={quadrant.id}
-              quadrant={quadrant}
-              tasks={inQuadrant(quadrant)}
-              onToggleDone={onToggleDone}
-              onFocus={onFocus}
-              onDelete={onDelete}
-              activeTaskId={activeTaskId}
-              sessionRunning={sessionRunning}
-            />
-          ))}
-        </div>
+        <AxisLabel vertical>Important</AxisLabel>
+        {QUADRANTS.slice(0, 2).map((quadrant) => (
+          <Zone
+            key={quadrant.id}
+            quadrant={quadrant}
+            tasks={inQuadrant(quadrant)}
+            onToggleDone={onToggleDone}
+            onFocus={onFocus}
+            onDelete={onDelete}
+            activeTaskId={activeTaskId}
+            sessionRunning={sessionRunning}
+          />
+        ))}
+        <AxisLabel vertical>Not important</AxisLabel>
+        {QUADRANTS.slice(2).map((quadrant) => (
+          <Zone
+            key={quadrant.id}
+            quadrant={quadrant}
+            tasks={inQuadrant(quadrant)}
+            onToggleDone={onToggleDone}
+            onFocus={onFocus}
+            onDelete={onDelete}
+            activeTaskId={activeTaskId}
+            sessionRunning={sessionRunning}
+          />
+        ))}
       </div>
 
       <DoneToday tasks={done} onToggleDone={onToggleDone} onDelete={onDelete} />
@@ -184,7 +248,9 @@ export function DoneToday({
       data-zone="done"
       className="matrix-zone flex flex-col gap-2 rounded-2xl border p-4"
     >
-      <h3 className="text-sm font-medium text-[var(--zone-ink-muted)]">
+      {/* Same tracked-caps vocabulary as the zones, muted ink: finished work
+          keeps its place in the system without asking for its attention. */}
+      <h3 className="text-xs font-medium tracking-[0.18em] uppercase text-[var(--zone-ink-muted)]">
         Done today · {tasks.length}
       </h3>
       <div className="flex flex-col gap-2">
