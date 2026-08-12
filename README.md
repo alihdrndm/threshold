@@ -99,15 +99,24 @@ low number is to commit to less, not to try harder.
 
 ## How the blocking works
 
-Entries go in the hosts file, between markers, pointing at `0.0.0.0` — an
-instant connection failure rather than a slow timeout, and never a redirect to a
-local server, because the social domains are HSTS-preloaded and that produces
-certificate warnings instead of a clean stop.
+Entries go in the hosts file, between markers, pointing at a loopback address
+Threshold owns. The site fails instantly with a plain connection error — never a
+certificate warning, because Threshold closes the connection without ever
+presenting one — and the attempt itself is observable: the app sees it arrive,
+reads which site was asked for from the handshake, and can answer with a quote
+you chose. Blocking by a null address could only ever refuse an urge; this one
+gets to reply to it.
 
-That alone is not enough: Chrome and Edge resolve names over HTTPS and ignore
-the hosts file entirely. So while a block is armed, Threshold turns DNS-over-HTTPS
-off by policy. **Your browsers will say they are "managed by your organization"
-during a session.** That is this, and it is removed the moment the block lifts.
+That alone is not enough: Chromium browsers and Firefox resolve names over HTTPS
+and ignore the hosts file entirely. So while a block is armed, Threshold turns
+DNS-over-HTTPS off by policy — Chrome, Edge, Brave, Vivaldi and Firefox. **Your
+browsers will say they are "managed by your organization" during a session.**
+That is this, and it is removed the moment the block lifts.
+
+One caveat, stated rather than hidden: browsers remember addresses briefly, so a
+site visited moments before the block may keep working for up to a minute, and
+the reverse after it lifts. That memory belongs to the browser; a reload sorts
+it out.
 
 The commitment lock lives in an admin-only directory, so the app can't lift a
 block early and neither can you by editing a file. It records when it was armed
@@ -143,10 +152,12 @@ priority. Nothing is red: alarm colour just teaches you to stop seeing it.
 
 ## Status
 
-0.3.0. Phases 0–7 are built — scaffold, triggers, ritual with local history,
+0.4.0. Phases 0–7 are built — scaffold, triggers, ritual with local history,
 design pass, blocking engine, tasks and matrix, pause and settings, installer —
-plus appearance options, focus sessions, the closing check-in, and prediction
-calibration.
+plus appearance options, focus sessions, the closing check-in, prediction
+calibration, sites of your own alongside the built-in categories, and a quote
+reservoir: lines you keep, shown on the ritual's opening screen and in a small
+corner window when a blocked site refuses.
 
 Not yet done: a clean-VM install/uninstall run, and per-browser confirmation by
 hand. See [TESTING.md](TESTING.md) for what is and isn't verified — note its

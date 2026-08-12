@@ -6,6 +6,7 @@
 //! when no webview is alive.
 
 pub mod intentions;
+pub mod quotes;
 pub mod sessions;
 pub mod tasks;
 
@@ -171,6 +172,35 @@ fn migrate(conn: &Connection) -> Result<(), String> {
             "#,
         )
         .map_err(|err| format!("migration 3 failed: {err}"))?;
+    }
+
+    if version < 4 {
+        // Words the user chose, to be read at the two moments that matter: the
+        // ritual, and the wall they hit when a blocked site refuses.
+        //
+        // The app's own copy is deliberately flat and unmotivating - praise at
+        // the moment of stating an intention licenses the behaviour being
+        // avoided. That rule is about *the app* congratulating you. A line you
+        // picked yourself is not the app talking, and it is doing a different
+        // job: at the moment of an urge, something you already believe is worth
+        // more than anything this program could think to say.
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            CREATE TABLE IF NOT EXISTS quotes(
+                id INTEGER PRIMARY KEY,
+                text TEXT NOT NULL,
+                -- Optional. Plenty of the lines people keep are their own.
+                author TEXT,
+                created_ts TEXT NOT NULL
+            );
+            -- The same words twice is a mistake, not a preference.
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_quotes_text ON quotes(text);
+            PRAGMA user_version = 4;
+            COMMIT;
+            "#,
+        )
+        .map_err(|err| format!("migration 4 failed: {err}"))?;
     }
 
     Ok(())

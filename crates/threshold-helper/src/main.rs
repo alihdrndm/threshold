@@ -119,7 +119,6 @@ fn run(req: &Request) -> Result<String, String> {
 
 fn block(req: &Request) -> Result<String, String> {
     let targets = blocklist::hosts_for(&req.categories, &req.custom_hosts);
-    let apexes = blocklist::apexes_for(&req.categories, &req.custom_hosts);
     let unknown = blocklist::unknown_categories(&req.categories);
     let hosts_path = hosts::system_hosts();
     let existing = hosts::read(&hosts_path)?;
@@ -142,29 +141,31 @@ fn block(req: &Request) -> Result<String, String> {
             &existing,
             &proposed,
             &targets,
-            &apexes,
             &unknown,
             Some(&new_lock),
             true,
         ));
     }
 
-    // The state directory has to exist and be locked down before anything is
-    // written into it, and the policy backup goes there.
+    // The state directory has to exist and be locked down before the lock is
+    // written into it.
     secure_state_dir()?;
 
+    // No browser blocklist here, deliberately. Policy blocking stops a
+    // navigation inside the browser, before any connection is made — and the
+    // connection arriving at the sink is what lets the app answer an urge with
+    // the user's own words. The hosts entries and the DoH policy do the
+    // blocking; the sink makes it observable.
     hosts::write_atomic(&hosts_path, &proposed)?;
     policies::apply()?;
-    policies::apply_blocklist(&apexes)?;
     flush_dns();
 
     std::fs::write(lock_path(), lock::render(&new_lock))
         .map_err(|err| format!("could not write lock: {err}"))?;
 
     Ok(format!(
-        "blocked {} hosts and {} domains in browser policy, until {}",
+        "blocked {} hosts until {}",
         targets.len(),
-        apexes.len(),
         until
     ))
 }
@@ -205,7 +206,6 @@ fn unblock(req: &Request, emergency: bool) -> Result<String, String> {
             if emergency { "emergency_unblock" } else { "unblock" },
             &existing,
             &proposed,
-            &[],
             &[],
             &[],
             None,
@@ -264,7 +264,6 @@ fn dry_run_report(
     existing: &str,
     proposed: &str,
     targets: &[String],
-    apexes: &[String],
     unknown: &[String],
     new_lock: Option<&lock::Lock>,
     applying_policies: bool,
@@ -282,8 +281,17 @@ fn dry_run_report(
 
     if !targets.is_empty() {
         out.push_str(&format!("  {} hosts would be blocked, e.g.\n", targets.len()));
-        for host in targets.iter().take(6) {
-            out.push_str(&format!("    0.0.0.0 {host}\n"));
+        // Quoted from what would actually be written, not re-formatted here.
+        // This used to print a hardcoded `0.0.0.0` prefix, so the report claimed
+        // an address the writer had stopped using - and a dry run that describes
+        // something other than the real change is worse than none, because the
+        // whole point of the mode is to be believed.
+        for line in proposed
+            .lines()
+            .filter(|line| line.trim_start().starts_with(threshold_protocol::SINK_IP))
+            .take(6)
+        {
+            out.push_str(&format!("    {line}\n"));
         }
         if targets.len() > 6 {
             out.push_str(&format!("    … and {} more\n", targets.len() - 6));
@@ -300,7 +308,7 @@ fn dry_run_report(
     }
 
     out.push_str("\nregistry:\n");
-    for line in policies::describe(apexes) {
+    for line in policies::describe() {
         out.push_str(&format!(
             "  {} {line}\n",
             if applying_policies { "SET   " } else { "DELETE" }

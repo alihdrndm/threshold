@@ -7,10 +7,10 @@
 //!   * Writes are atomic — a temp file in the same directory, then a replace.
 //!     A crash mid-write leaves the old file, never half of a new one.
 //!
-//! `0.0.0.0` rather than `127.0.0.1`: it fails the connection instantly instead
-//! of waiting for a local timeout. Never a redirect to a local server either —
-//! the social domains are HSTS-preloaded, so that produces certificate
-//! interstitials rather than a clean stop.
+//! Entries point at `SINK_IP`, a dedicated loopback address. See the constant
+//! for why it is that rather than `0.0.0.0` or `127.0.0.1`: it fails just as
+//! fast, it cannot collide with anything the user runs locally, and it makes the
+//! attempt observable so the app can answer an urge instead of only refusing it.
 
 use std::path::{Path, PathBuf};
 
@@ -85,7 +85,8 @@ pub fn with_block(existing: &str, hosts: &[String]) -> String {
     out.push_str(BEGIN);
     out.push_str(eol);
     for host in hosts {
-        out.push_str("0.0.0.0 ");
+        out.push_str(threshold_protocol::SINK_IP);
+        out.push(' ');
         out.push_str(host);
         out.push_str(eol);
     }
@@ -135,9 +136,14 @@ mod tests {
     }
 
     #[test]
-    fn blocks_with_a_null_route_not_loopback() {
+    fn blocks_at_our_own_loopback_address_not_the_shared_one() {
         let result = with_block(EXISTING, &hosts(&["example.com"]));
-        assert!(result.contains("0.0.0.0 example.com"));
+        assert!(result.contains(&format!(
+            "{} example.com",
+            threshold_protocol::SINK_IP
+        )));
+        // 127.0.0.1 would hand every blocked site to whatever the user happens
+        // to be running locally, which is worse than not blocking at all.
         assert!(!result.contains("127.0.0.1 example.com"));
     }
 

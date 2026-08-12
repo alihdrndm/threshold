@@ -26,6 +26,27 @@ pub const POLICY_BACKUP_FILE: &str = "policy-backup.json";
 pub const HOSTS_BEGIN: &str = "# THRESHOLD-BEGIN";
 pub const HOSTS_END: &str = "# THRESHOLD-END";
 
+/// Where blocked names point.
+///
+/// A dedicated loopback address rather than `127.0.0.1`, so Threshold can listen
+/// there without ever colliding with something the user is already running
+/// locally — a dev server on `127.0.0.1:443` would otherwise answer for every
+/// blocked site, which is worse than not blocking at all.
+///
+/// This used to be `0.0.0.0`, chosen to fail instantly rather than wait for a
+/// local timeout. Loopback fails just as fast — nothing listening gives an
+/// immediate reset — and it buys the one thing `0.0.0.0` could never give: the
+/// connection attempt is *observable*, so the app knows an urge arrived and can
+/// answer it. The old reason not to do this was that a local server produces
+/// certificate warnings on HSTS-preloaded domains. That is true of a server that
+/// answers; Threshold never completes a handshake and never presents a
+/// certificate, so there is nothing for the browser to distrust.
+pub const SINK_IP: &str = "127.0.0.9";
+
+/// Port pairs the sink listens on: HTTPS first, since everything worth blocking
+/// is HTTPS and only a stray plain-HTTP attempt lands on 80.
+pub const SINK_PORTS: [u16; 2] = [443, 80];
+
 pub fn program_data() -> PathBuf {
     PathBuf::from(PROGRAM_DATA)
 }
@@ -377,13 +398,20 @@ impl HostsState {
     }
 }
 
-const NULL_ROUTE: &str = "0.0.0.0 ";
+/// Sink addresses a Threshold entry may carry.
+///
+/// `0.0.0.0` is still recognised because a block armed by an older helper is
+/// sitting in somebody's hosts file right now, and a reader that did not know it
+/// would report that file as clean — the exact failure this type exists to stop.
+const SINKS: [&str; 2] = [SINK_IP, "0.0.0.0"];
 
 /// Pure so every shape of damage is a test rather than a claim.
 pub fn parse_hosts(contents: &str) -> HostsState {
     let entry = |line: &str| -> Option<String> {
-        line.trim()
-            .strip_prefix(NULL_ROUTE)
+        let line = line.trim();
+        SINKS
+            .iter()
+            .find_map(|sink| line.strip_prefix(&format!("{sink} ")))
             .map(|host| host.trim().to_string())
             .filter(|host| !host.is_empty())
     };

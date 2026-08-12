@@ -9,6 +9,8 @@ import {
   rememberedCategories,
   rememberSites,
   rememberedSites,
+  quoteFor,
+  type Quote,
 } from "@/lib/tauri";
 import { themeById, themeFor } from "@/themes";
 import {
@@ -30,6 +32,7 @@ import {
   HonourableExit,
   Pill,
   Question,
+  QuoteLine,
   Step,
 } from "./Shell";
 
@@ -82,6 +85,7 @@ export function Ritual({ trigger }: { trigger: string }) {
   const [duration, setDuration] = useState<number>(25);
   const [categories, setCategories] = useState<string[]>([]);
   const [sites, setSites] = useState<string[]>([]);
+  const [quote, setQuote] = useState<Quote | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
   // The theme owns the palette; nothing below reads a raw colour.
@@ -103,6 +107,11 @@ export function Ritual({ trigger }: { trigger: string }) {
     rememberedSites()
       .then(setSites)
       .catch(() => setSites([]));
+    // Picked once per ritual, not per render: re-rolling under a shuffle setting
+    // would change the words while they are being read.
+    quoteFor("ritual")
+      .then(setQuote)
+      .catch(() => setQuote(null));
   }, []);
 
   function toggleCategory(id: string) {
@@ -201,6 +210,11 @@ export function Ritual({ trigger }: { trigger: string }) {
             />
             <Question>{theme.copy.greeting}</Question>
             <Hint>{timeLabel(now)}</Hint>
+            {/* Only the opening screen. This is the one moment in the ritual you
+                are reading rather than answering; on the question screens it
+                would sit beside prompts whose wording is fixed because changing
+                it changes what is being measured. */}
+            {quote && <QuoteLine text={quote.text} author={quote.author} />}
             <Pill autoFocus onClick={() => setStep("intention")}>
               Begin
             </Pill>

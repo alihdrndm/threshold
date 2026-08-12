@@ -1,17 +1,23 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 import {
+  addQuote,
+  chooseQuote,
   emergencyUnblock,
   getDiagnostics,
   getSettings,
+  listQuotes,
   pauseFor,
   pauseStatus,
   rememberedSites,
   rememberSites,
+  removeQuote,
   repairHelper,
   resumeNow,
   setSetting,
   type Diagnostics,
+  type Quote,
+  type QuoteSurface,
 } from "@/lib/tauri";
 import { useSiteEditor } from "@/sites/useSiteEditor";
 import { CATEGORIES } from "../popup/ritual/copy";
@@ -37,6 +43,7 @@ export function SettingsView({
   const [repair, setRepair] = useState<string | null>(null);
   const [unblock, setUnblock] = useState<string | null>(null);
   const [sites, setSites] = useState<string[]>([]);
+  const [quotes, setQuotes] = useState<Quote[]>([]);
 
   async function refresh() {
     const pairs = await getSettings();
@@ -44,6 +51,7 @@ export function SettingsView({
     setPausedUntil(await pauseStatus());
     setDiagnostics(await getDiagnostics().catch(() => null));
     setSites(await rememberedSites().catch(() => []));
+    setQuotes(await listQuotes().catch(() => []));
   }
 
   // Saved as it changes rather than behind a Save button: everything else on
@@ -143,6 +151,25 @@ export function SettingsView({
         </div>
 
         <SiteList sites={sites} onChange={saveSites} />
+      </Section>
+
+      {/* Placed after the blocklist because that is where it is read: the two
+          moments a quote appears are the ritual and the wall a blocked site
+          puts up. */}
+      <Section
+        title="Your quotes"
+        note="Words worth reading at the moment an urge arrives. Nothing else in this app tries to motivate you — praise for setting an intention licenses the very thing you were avoiding — but a line you chose yourself is not this program talking, and that is a different matter. Leave it empty and no quote appears anywhere."
+      >
+        <QuoteReservoir
+          quotes={quotes}
+          onChange={setQuotes}
+          ritual={values.quote_ritual ?? "shuffle"}
+          blocked={values.quote_blocked ?? "shuffle"}
+          onChoose={async (surface, id) => {
+            await chooseQuote(surface, id);
+            await refresh();
+          }}
+        />
       </Section>
 
       <Section
@@ -260,16 +287,18 @@ export function SettingsView({
       <Section title="Browsers" note="">
         <p className="max-w-prose text-sm text-[var(--color-ink-muted)]">
           While a block is armed your browsers will say they are “managed by
-          your organization”, and a blocked site shows the browser’s own
-          “blocked by your administrator” page. That is Threshold: it turns off
-          DNS-over-HTTPS and adds the sites to the browser’s blocklist. Both are
-          removed when the block lifts.
+          your organization”. That is Threshold turning off DNS-over-HTTPS —
+          without it, blocking silently does nothing. It is removed when the
+          block lifts.
         </p>
         <p className="max-w-prose text-sm text-[var(--color-ink-muted)]">
-          The browser policy is what does the real work. Blocking by address
-          alone sits underneath the browser, and a site that keeps an offline
-          copy of itself — x.com is one — answers from that copy before any
-          address is looked up.
+          A blocked site fails with a plain connection error, and Threshold
+          answers in the corner with a quote you chose — the attempt lands on an
+          address this app is listening at, which is how it knows an urge
+          arrived. One honest caveat: a site you visited moments before the
+          block may keep working for up to a minute, and the reverse after it
+          lifts. Browsers remember addresses briefly, and that memory belongs to
+          them.
         </p>
       </Section>
 
@@ -376,6 +405,167 @@ function SiteList({
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * The quote reservoir, and which quote each surface shows.
+ *
+ * "Shuffle" is the default and is listed first, because a fixed line habituates
+ * exactly as fast as a fixed dialog does — the same finding that makes the
+ * ritual rotate its phrasing daily. Pinning is there for the person who has one
+ * line that actually works on them, which is a real thing and worth allowing.
+ */
+function QuoteReservoir({
+  quotes,
+  onChange,
+  ritual,
+  blocked,
+  onChoose,
+}: {
+  quotes: Quote[];
+  onChange: (next: Quote[]) => void;
+  ritual: string;
+  blocked: string;
+  onChoose: (surface: QuoteSurface, id: number | null) => Promise<void>;
+}) {
+  const [text, setText] = useState("");
+  const [author, setAuthor] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+
+  async function add() {
+    if (!text.trim()) return;
+    try {
+      onChange(await addQuote(text, author.trim() || null));
+      setText("");
+      setAuthor("");
+      setProblem(null);
+    } catch (reason) {
+      setProblem(String(reason));
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {quotes.length > 0 && (
+        <ul className="flex flex-col gap-2">
+          {quotes.map((quote) => (
+            <li
+              key={quote.id}
+              className="flex items-start justify-between gap-4 rounded-2xl border border-[var(--color-border-subtle)] px-4 py-3"
+            >
+              <div className="flex flex-col gap-1">
+                <p className="text-sm text-[var(--color-ink)]">{quote.text}</p>
+                {quote.author && (
+                  <p className="text-xs text-[var(--color-ink-muted)]">
+                    {quote.author}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={async () => onChange(await removeQuote(quote.id))}
+                aria-label="Remove this quote"
+                title="Remove"
+                className="ritual-pressable shrink-0 rounded-full px-2 text-sm text-[var(--color-ink-muted)]"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex flex-col gap-2">
+        <textarea
+          value={text}
+          onChange={(event) => {
+            setText(event.target.value);
+            if (problem) setProblem(null);
+          }}
+          rows={2}
+          placeholder="A line worth reading when the urge arrives"
+          className="ritual-field w-full resize-none rounded-2xl border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+        />
+        <div className="flex items-center gap-2">
+          <input
+            value={author}
+            onChange={(event) => setAuthor(event.target.value)}
+            placeholder="Who said it — optional"
+            aria-label="Author, optional"
+            className="ritual-field w-64 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-2 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+          />
+          <Button onClick={() => void add()}>Keep it</Button>
+        </div>
+        {problem && (
+          <p role="alert" className="text-xs text-[var(--color-ink-muted)]">
+            {problem}
+          </p>
+        )}
+      </div>
+
+      {quotes.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <QuotePicker
+            label="In the ritual"
+            quotes={quotes}
+            value={ritual}
+            onChoose={(id) => onChoose("ritual", id)}
+          />
+          <QuotePicker
+            label="On a blocked site"
+            quotes={quotes}
+            value={blocked}
+            onChoose={(id) => onChoose("blocked", id)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuotePicker({
+  label,
+  quotes,
+  value,
+  onChoose,
+}: {
+  label: string;
+  quotes: Quote[];
+  value: string;
+  onChoose: (id: number | null) => Promise<void>;
+}) {
+  // A quote pinned and then deleted leaves a stale id here; Rust already falls
+  // back to shuffling, so the control agrees with what actually happens.
+  const known = quotes.some((quote) => String(quote.id) === value);
+  const selected = known ? value : "shuffle";
+
+  return (
+    <label className="flex items-center justify-between gap-4 text-sm">
+      <span className="text-[var(--color-ink-muted)]">{label}</span>
+      <select
+        value={selected}
+        onChange={(event) =>
+          void onChoose(
+            // `parseInt`, not `Number` — this file has a `Number` settings
+            // component that shadows the global.
+            event.target.value === "shuffle"
+              ? null
+              : parseInt(event.target.value, 10),
+          )
+        }
+        className="ritual-field max-w-xs truncate rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-2 text-sm text-[var(--color-ink)] outline-none"
+      >
+        <option value="shuffle">Shuffle them</option>
+        {quotes.map((quote) => (
+          <option key={quote.id} value={quote.id}>
+            {quote.text.length > 48
+              ? `${quote.text.slice(0, 48)}…`
+              : quote.text}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

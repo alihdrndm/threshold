@@ -142,6 +142,38 @@ export function Field({
 }
 
 /**
+ * A line the user kept, on the screen they see before being asked anything.
+ *
+ * Quieter than the greeting and larger than a hint: it is meant to be read, not
+ * answered, and it must not compete with the question underneath it. Rendered as
+ * a real `blockquote` — the whole point is that these are somebody else's words,
+ * or your own from another day, rather than the app's voice.
+ *
+ * No quotation marks drawn around it. People paste their own punctuation and a
+ * decorative pair would end up doubled half the time.
+ */
+export function QuoteLine({
+  text,
+  author,
+}: {
+  text: string;
+  author: string | null;
+}) {
+  return (
+    <blockquote className="flex max-w-md flex-col items-center gap-2 text-center">
+      <p className="text-lg leading-relaxed font-light text-balance text-[var(--color-ink)]/80">
+        {text}
+      </p>
+      {author && (
+        <cite className="text-xs tracking-wide text-[var(--color-ink-muted)] not-italic">
+          {author}
+        </cite>
+      )}
+    </blockquote>
+  );
+}
+
+/**
  * The honourable exit. Always present, always one click, never worded so that
  * taking it reads as failure — the RCT this design follows found the explicit
  * dismiss option to be its single most effective feature, and hiding or shaming

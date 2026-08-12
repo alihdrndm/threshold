@@ -200,7 +200,7 @@ fn next_ritual_label() -> String {
 
 /// Percent-encode anything that would break out of a query parameter. Task
 /// titles are user text and will contain spaces, ampersands and quotes.
-fn urlencode(value: &str) -> String {
+pub(crate) fn urlencode(value: &str) -> String {
     value
         .bytes()
         .map(|byte| match byte {

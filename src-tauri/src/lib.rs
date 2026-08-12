@@ -1,3 +1,4 @@
+mod blocked;
 mod checkin;
 mod commands;
 mod db;
@@ -9,6 +10,7 @@ mod session;
 mod startup;
 mod tray;
 pub mod triggers;
+mod wall;
 
 use std::sync::Mutex;
 
@@ -44,6 +46,11 @@ pub fn run() {
             commands::remembered_sites,
             commands::remember_sites,
             commands::check_site,
+            commands::list_quotes,
+            commands::add_quote,
+            commands::remove_quote,
+            commands::quote_for,
+            commands::choose_quote,
             commands::data_location,
             commands::open_dashboard,
             commands::list_contexts,
@@ -99,6 +106,13 @@ pub fn run() {
             // memory of whichever run armed it.
             session::spawn_expiry_watcher(handle.clone());
 
+            // Blocked names resolve to an address this app owns, so a browser
+            // that tries one lands here and can be answered with a line the user
+            // chose. Idle sockets until then, and entirely optional: if the
+            // ports cannot be bound, blocking is unaffected and only the quote
+            // is lost.
+            wall::listen(&handle);
+
             // Launched by the logon task or the autostart entry: this *is* the
             // boot moment, so ask for the ritual straight away.
             let args: Vec<String> = std::env::args().collect();
@@ -118,7 +132,8 @@ pub fn run() {
                 // asked to show all day and will not appear, and the next
                 // session would then owe a question with nowhere to ask it.
                 let transient = window.label().starts_with(popup::POPUP_LABEL)
-                    || window.label() == checkin::LABEL;
+                    || window.label() == checkin::LABEL
+                    || window.label() == blocked::LABEL;
                 if !transient {
                     api.prevent_close();
                     let _ = window.hide();
