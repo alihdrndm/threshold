@@ -10,6 +10,7 @@ function Zone({
   tasks,
   onToggleDone,
   onFocus,
+  onDelete,
   activeTaskId,
   sessionRunning,
   className,
@@ -18,6 +19,7 @@ function Zone({
   tasks: Task[];
   onToggleDone: (task: Task) => void;
   onFocus?: (task: Task) => void;
+  onDelete?: (task: Task) => void;
   /** The task a session is running on, if any. */
   activeTaskId?: number | null;
   /** Whether any session is running — this task's or another's. */
@@ -62,6 +64,7 @@ function Zone({
               task={task}
               onToggleDone={onToggleDone}
               onFocus={onFocus}
+              onDelete={onDelete}
               active={task.id === activeTaskId}
               sessionRunning={sessionRunning}
             />
@@ -95,12 +98,14 @@ export function MatrixView({
   tasks,
   onToggleDone,
   onFocus,
+  onDelete,
   activeTaskId,
   sessionRunning,
 }: {
   tasks: Task[];
   onToggleDone: (task: Task) => void;
   onFocus: (task: Task) => void;
+  onDelete: (task: Task) => void;
   activeTaskId: number | null;
   sessionRunning: boolean;
 }) {
@@ -124,9 +129,14 @@ export function MatrixView({
           tasks={inQuadrant(INBOX)}
           onToggleDone={onToggleDone}
           onFocus={onFocus}
+          onDelete={onDelete}
           activeTaskId={activeTaskId}
           sessionRunning={sessionRunning}
-          className="w-64 shrink-0"
+          // w-72, not w-64: with a checkbox, a Focus button and a delete
+          // control in the row, 256px left a title roughly twelve characters
+          // before wrapping — the rail exists to *hold* unclassified tasks,
+          // so it gets the space to show them.
+          className="w-72 shrink-0"
         />
         {/* auto-rows-fr keeps the 2x2 a true 2x2: with solid fills, rows of
             different heights read as a broken layout rather than as content. */}
@@ -138,6 +148,7 @@ export function MatrixView({
               tasks={inQuadrant(quadrant)}
               onToggleDone={onToggleDone}
               onFocus={onFocus}
+              onDelete={onDelete}
               activeTaskId={activeTaskId}
               sessionRunning={sessionRunning}
             />
@@ -145,7 +156,7 @@ export function MatrixView({
         </div>
       </div>
 
-      <DoneToday tasks={done} onToggleDone={onToggleDone} />
+      <DoneToday tasks={done} onToggleDone={onToggleDone} onDelete={onDelete} />
     </div>
   );
 }
@@ -157,9 +168,11 @@ export function MatrixView({
 export function DoneToday({
   tasks,
   onToggleDone,
+  onDelete,
 }: {
   tasks: Task[];
   onToggleDone: (task: Task) => void;
+  onDelete?: (task: Task) => void;
 }) {
   if (tasks.length === 0) return null;
 
@@ -176,7 +189,12 @@ export function DoneToday({
       </h3>
       <div className="flex flex-col gap-2">
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} onToggleDone={onToggleDone} />
+          <TaskCard
+            key={task.id}
+            task={task}
+            onToggleDone={onToggleDone}
+            onDelete={onDelete}
+          />
         ))}
       </div>
     </section>

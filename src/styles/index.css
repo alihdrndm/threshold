@@ -398,6 +398,19 @@ textarea {
   transition:
     background-color 150ms ease,
     border-color 150ms ease;
+  /* Entering cards fade in — on add, on drop into a zone, on landing in Done
+     today. An animation rather than a transition, because dnd-kit writes an
+     inline `transition` on cards while sorting and an inline value would
+     silently override anything declared here. Opacity only, and no
+     reduced-motion gate, per the banner's rule: comprehension-carrying fades
+     stay, movement goes. */
+  animation: banner-in 180ms var(--ease-out) both;
+}
+
+/* The delete notice enters like the banner does: a fade, no rise, and its
+   removal is instant — nothing is faster than gone. */
+.matrix-notice {
+  animation: banner-in 200ms var(--ease-out) both;
 }
 
 /* The asymmetry is deliberate. Dark builds surfaces by adding light, so a card

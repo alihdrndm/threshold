@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -46,6 +46,17 @@ export function TasksView({
   const [draft, setDraft] = useState("");
   const [dragging, setDragging] = useState<Task | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; undo: () => void } | null>(
+    null,
+  );
+  const noticeTimer = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    },
+    [],
+  );
 
   // Pointer needs a small activation distance, or a click on the done checkbox
   // registers as a micro-drag and never fires. Keyboard is not an afterthought:
@@ -92,6 +103,28 @@ export function TasksView({
     setDraft("");
     await addTask(title, contextFilter);
     await refresh();
+  }
+
+  /// Deleting asks nothing and forgives everything: the row keeps its quadrant
+  /// and its status in the database, so Undo is a plain restore rather than a
+  /// reconstruction. A confirm dialog guards against a click; an undo forgives
+  /// one, and costs nothing on the nineteen deletes that were meant.
+  async function deleteTask(task: Task) {
+    // Optimistic: the card leaves now, not after SQLite.
+    setTasks((current) => current.filter((t) => t.id !== task.id));
+    await setTaskStatus(task.id, "deleted");
+    const before = task.status;
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    setNotice({
+      text: `Deleted “${task.title}”`,
+      undo: () =>
+        run(async () => {
+          setNotice(null);
+          await setTaskStatus(task.id, before);
+          await refresh();
+        }),
+    });
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
   }
 
   async function toggleDone(task: Task) {
@@ -191,6 +224,24 @@ export function TasksView({
         </p>
       )}
 
+      {/* Quieter than the error line on purpose: this reports something that
+          went right. Undo is styled like Focus — the interface keeps one
+          vocabulary for "small round thing you can press". */}
+      {notice && (
+        <div className="matrix-notice flex items-center gap-3 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-2 text-sm">
+          <span className="min-w-0 flex-1 truncate text-[var(--color-ink-muted)]">
+            {notice.text}
+          </span>
+          <button
+            type="button"
+            onClick={notice.undo}
+            className="ritual-pressable shrink-0 rounded-full border border-[color-mix(in_srgb,var(--color-ink)_16%,transparent)] px-2.5 py-1 text-xs text-[var(--color-ink)]"
+          >
+            Undo
+          </button>
+        </div>
+      )}
+
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
@@ -204,6 +255,7 @@ export function TasksView({
               tasks={visible}
               onToggleDone={(t) => run(() => toggleDone(t))}
               onFocus={(t) => run(() => focus(t))}
+              onDelete={(t) => run(() => deleteTask(t))}
               activeTaskId={activeTaskId}
               sessionRunning={sessionRunning}
             />
@@ -213,6 +265,7 @@ export function TasksView({
               contexts={contexts}
               onToggleDone={(t) => run(() => toggleDone(t))}
               onFocus={(t) => run(() => focus(t))}
+              onDelete={(t) => run(() => deleteTask(t))}
             />
           )}
         </div>
@@ -236,11 +289,13 @@ function ListView({
   contexts,
   onToggleDone,
   onFocus,
+  onDelete,
 }: {
   tasks: Task[];
   contexts: TaskContext[];
   onToggleDone: (task: Task) => void;
   onFocus: (task: Task) => void;
+  onDelete: (task: Task) => void;
 }) {
   const open = tasks.filter((t) => t.status !== "done");
   const done = tasks.filter((t) => t.status === "done");
@@ -283,12 +338,13 @@ function ListView({
                 task={task}
                 onToggleDone={onToggleDone}
                 onFocus={onFocus}
+                onDelete={onDelete}
               />
             ))}
           </SortableContext>
         </section>
       ))}
-      <DoneToday tasks={done} onToggleDone={onToggleDone} />
+      <DoneToday tasks={done} onToggleDone={onToggleDone} onDelete={onDelete} />
     </div>
   );
 }

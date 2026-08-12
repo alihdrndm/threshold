@@ -14,12 +14,14 @@ export function TaskCard({
   task,
   onToggleDone,
   onFocus,
+  onDelete,
   active = false,
   sessionRunning = false,
 }: {
   task: Task;
   onToggleDone: (task: Task) => void;
   onFocus?: (task: Task) => void;
+  onDelete?: (task: Task) => void;
   /** A session is running on *this* task. */
   active?: boolean;
   /** A session is running on some task, this one or another. */
@@ -46,7 +48,11 @@ export function TaskCard({
         transition,
       }}
       className={clsx(
-        "matrix-card group flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm",
+        // items-start, not items-center: a title is allowed to wrap now, and a
+        // centred checkbox beside a three-line title floats in the middle of
+        // nowhere. The small top margins below re-centre every control against
+        // the title's first line instead.
+        "matrix-card group flex items-start gap-3 rounded-xl border px-3 py-2.5 text-sm",
       )}
     >
       <button
@@ -54,7 +60,7 @@ export function TaskCard({
         onClick={() => onToggleDone(task)}
         aria-label={done ? "Mark as not done" : "Mark as done"}
         className={clsx(
-          "grid size-[18px] shrink-0 place-items-center rounded-full border transition-colors duration-150",
+          "mt-1 grid size-[18px] shrink-0 place-items-center rounded-full border transition duration-150 active:scale-90",
           done
             ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20"
             : // Muted ink at 50% measures 2.11:1 on a Do First card — under the
@@ -79,14 +85,16 @@ export function TaskCard({
       </button>
 
       {/* The whole body is the drag handle: grabbing a task anywhere but the
-          buttons should move it. `min-w-0` lets it actually shrink — without it
-          `truncate` gives the span its full text width, which pushes the Focus
-          button out past the edge of the card on long titles. */}
+          buttons should move it. The title wraps rather than truncates — a
+          clipped title hides exactly the words that distinguish two similar
+          tasks, and this list is short by design so the space is affordable.
+          `min-w-0` still matters: without it the span takes its full text
+          width and pushes the buttons past the edge of the card. */}
       <span
         {...attributes}
         {...listeners}
         className={clsx(
-          "min-w-0 flex-1 cursor-grab truncate active:cursor-grabbing",
+          "mt-[3px] min-w-0 flex-1 cursor-grab leading-snug break-words active:cursor-grabbing",
           done && "text-[var(--zone-ink-muted)] line-through",
         )}
       >
@@ -123,6 +131,29 @@ export function TaskCard({
             Focus
           </button>
         ))}
+
+      {/* Quiet on purpose, hidden never: the same rule as Focus. It carries no
+          border because it is not an invitation, only an exit — and deleting is
+          undoable from the notice line, which is why there is no "are you
+          sure". A dialog guards against a click; an undo forgives one. */}
+      {onDelete && !active && (
+        <button
+          type="button"
+          onClick={() => onDelete(task)}
+          aria-label={`Delete "${task.title}"`}
+          className="mt-px grid size-6 shrink-0 place-items-center rounded-full text-[color-mix(in_srgb,var(--zone-ink-muted)_75%,transparent)] transition duration-150 hover:bg-[color-mix(in_srgb,var(--color-ink)_8%,transparent)] hover:text-[var(--color-ink)] active:scale-90"
+        >
+          <svg viewBox="0 0 12 12" className="size-3" aria-hidden>
+            <path
+              d="M3 3 9 9 M9 3 3 9"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
