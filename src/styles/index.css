@@ -369,6 +369,16 @@ textarea {
   border-color: color-mix(in srgb, #000000 18%, var(--zone-fill));
 }
 
+/* The Inbox is a tray, not a fifth quadrant: its tasks have not been placed
+   yet. Dashed is the vocabulary this board already speaks for "not settled" —
+   the drag slot a lifted card leaves behind — so the rail says unclassified
+   without a word. Declared before the drag-over rule so a hover ring keeps
+   the dash: an accented dashed edge is exactly right for "drop here to hold
+   it for later". */
+.matrix-zone[data-zone="inbox"] {
+  border-style: dashed;
+}
+
 /* Drag-over composes with the quadrant rather than replacing it.
    The lift mixes in the ink colour, not the accent, so the hue survives — an
    accent wash pulls Do First from warm amber to neutral mauve and the quadrant
