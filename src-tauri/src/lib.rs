@@ -57,6 +57,7 @@ pub fn run() {
             commands::list_tasks,
             commands::add_task,
             commands::move_task,
+            commands::reorder_tasks,
             commands::set_task_status,
             commands::focus_on_task,
             commands::pause_status,

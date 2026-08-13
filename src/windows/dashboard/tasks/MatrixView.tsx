@@ -2,7 +2,13 @@ import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import clsx from "clsx";
 import type { Task } from "@/lib/tauri";
-import { DO_FIRST_SOFT_CAP, INBOX, QUADRANTS, type Quadrant } from "./quadrants";
+import {
+  DO_FIRST_SOFT_CAP,
+  INBOX,
+  QUADRANTS,
+  inQuadrant,
+  type Quadrant,
+} from "./quadrants";
 import { TaskCard } from "./TaskCard";
 
 function Zone({
@@ -67,10 +73,11 @@ function Zone({
 
       <SortableContext items={tasks.map((t) => t.id)} strategy={rectSortingStrategy}>
         <div className="flex flex-col gap-2">
-          {tasks.map((task) => (
+          {tasks.map((task, index) => (
             <TaskCard
               key={task.id}
               task={task}
+              ordinal={index + 1}
               onToggleDone={onToggleDone}
               onFocus={onFocus}
               onDelete={onDelete}
@@ -153,12 +160,7 @@ export function MatrixView({
   const open = tasks.filter((t) => t.status !== "done");
   const done = tasks.filter((t) => t.status === "done");
 
-  const inQuadrant = (q: Quadrant) =>
-    open.filter((t) =>
-      q.urgent === null
-        ? t.urgent === null || t.important === null
-        : t.urgent === q.urgent && t.important === q.important,
-    );
+  const zoneTasks = (q: Quadrant) => open.filter((t) => inQuadrant(t, q));
 
   return (
     <div className="flex flex-col gap-4">
@@ -184,7 +186,7 @@ export function MatrixView({
         <AxisLabel>Not urgent</AxisLabel>
         <Zone
           quadrant={INBOX}
-          tasks={inQuadrant(INBOX)}
+          tasks={zoneTasks(INBOX)}
           onToggleDone={onToggleDone}
           onFocus={onFocus}
           onDelete={onDelete}
@@ -197,7 +199,7 @@ export function MatrixView({
           <Zone
             key={quadrant.id}
             quadrant={quadrant}
-            tasks={inQuadrant(quadrant)}
+            tasks={zoneTasks(quadrant)}
             onToggleDone={onToggleDone}
             onFocus={onFocus}
             onDelete={onDelete}
@@ -210,7 +212,7 @@ export function MatrixView({
           <Zone
             key={quadrant.id}
             quadrant={quadrant}
-            tasks={inQuadrant(quadrant)}
+            tasks={zoneTasks(quadrant)}
             onToggleDone={onToggleDone}
             onFocus={onFocus}
             onDelete={onDelete}

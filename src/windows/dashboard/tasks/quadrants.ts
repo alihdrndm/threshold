@@ -1,3 +1,4 @@
+import { arrayMove } from "@dnd-kit/sortable";
 import type { Task } from "@/lib/tauri";
 
 /**
@@ -85,6 +86,40 @@ export function quadrantOf(task: Task): QuadrantId {
 
 export function quadrantById(id: QuadrantId): Quadrant {
   return QUADRANTS.find((q) => q.id === id) ?? INBOX;
+}
+
+/** Zone membership. The Inbox owns anything not yet fully classified. */
+export function inQuadrant(task: Task, quadrant: Quadrant): boolean {
+  return quadrant.urgent === null
+    ? task.urgent === null || task.important === null
+    : task.urgent === quadrant.urgent && task.important === quadrant.important;
+}
+
+/**
+ * The target zone's order after a drop, or null when the drop changes nothing.
+ *
+ * `zone` is the target zone's tasks in their current order, including the moved
+ * task when it already lives there. `overIndex` is the index of the card the
+ * drop landed on, or -1 when it landed on the zone itself.
+ *
+ * Within a zone the moved card takes the slot of the card it landed on
+ * (arrayMove semantics - the sortable preview has already shown exactly that).
+ * Crossing zones there is no preview, so it lands before the card under the
+ * cursor, or at the end when dropped on open space.
+ */
+export function orderAfterDrop(
+  zone: Task[],
+  moved: Task,
+  overIndex: number,
+): Task[] | null {
+  const from = zone.findIndex((t) => t.id === moved.id);
+  if (from !== -1) {
+    if (overIndex === -1 || overIndex === from) return null;
+    return arrayMove(zone, from, overIndex);
+  }
+  const next = [...zone];
+  next.splice(overIndex === -1 ? next.length : overIndex, 0, moved);
+  return next;
 }
 
 /**

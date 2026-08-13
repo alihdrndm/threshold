@@ -22,13 +22,20 @@ import {
   listContexts,
   listTasks,
   moveTask,
+  reorderTasks,
   setTaskStatus,
   type Task,
   type TaskContext,
 } from "@/lib/tauri";
 import { DoneToday, MatrixView } from "./MatrixView";
 import { TaskCard } from "./TaskCard";
-import { quadrantById, quadrantOf, type QuadrantId } from "./quadrants";
+import {
+  inQuadrant,
+  orderAfterDrop,
+  quadrantById,
+  quadrantOf,
+  type QuadrantId,
+} from "./quadrants";
 
 type View = "list" | "matrix";
 
@@ -159,7 +166,7 @@ export function TasksView({
   async function onDragEnd(event: DragEndEvent) {
     setDragging(null);
     const { active, over } = event;
-    if (!over) return;
+    if (!over || active.id === over.id) return;
 
     // Dropping onto a zone gives the quadrant id; dropping onto another card
     // means "the quadrant that card is in".
@@ -170,18 +177,41 @@ export function TasksView({
     const quadrant = quadrantById(quadrantId);
     const moved = tasks.find((t) => t.id === active.id);
     if (!moved) return;
-    if (moved.urgent === quadrant.urgent && moved.important === quadrant.important)
-      return;
 
-    // Optimistic: the drop should feel instantaneous, not wait on SQLite.
-    setTasks((current) =>
-      current.map((t) =>
-        t.id === moved.id
-          ? { ...t, urgent: quadrant.urgent, important: quadrant.important }
-          : t,
-      ),
+    // The zone's full membership from `tasks`, not `visible`: reordering under
+    // a context filter must not scramble the tasks the filter is hiding.
+    const zone = tasks.filter(
+      (t) => t.status !== "done" && inQuadrant(t, quadrant),
     );
-    await moveTask(moved.id, quadrant.urgent, quadrant.important, 0);
+    const overIndex = target ? zone.findIndex((t) => t.id === target.id) : -1;
+    const ordered = orderAfterDrop(zone, moved, overIndex);
+    if (!ordered) return;
+
+    const position = ordered.findIndex((t) => t.id === moved.id);
+    const orderOf = new Map(ordered.map((t, index) => [t.id, index]));
+    const crossedZones =
+      moved.urgent !== quadrant.urgent || moved.important !== quadrant.important;
+
+    // Optimistic: flags on the moved card, fresh indices across the target
+    // zone, then the same (sortOrder, id) sort the backend reads with - so
+    // the card settles where it will land, not after SQLite says so.
+    setTasks((current) =>
+      current
+        .map((t) => {
+          const next =
+            t.id === moved.id
+              ? { ...t, urgent: quadrant.urgent, important: quadrant.important }
+              : t;
+          const order = orderOf.get(t.id);
+          return order === undefined ? next : { ...next, sortOrder: order };
+        })
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id),
+    );
+
+    if (crossedZones) {
+      await moveTask(moved.id, quadrant.urgent, quadrant.important, position);
+    }
+    await reorderTasks(ordered.map((t) => t.id));
     await refresh();
   }
 

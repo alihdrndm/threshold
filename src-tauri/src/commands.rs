@@ -242,6 +242,14 @@ pub fn move_task(
     tasks::set_quadrant(&conn, id, urgent, important, sort_order.unwrap_or(0))
 }
 
+/// The order of one zone, as the user left it. Ids get their index; everything
+/// else keeps its number.
+#[tauri::command]
+pub fn reorder_tasks(db: State<'_, Db>, ids: Vec<i64>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    tasks::reorder(&conn, &ids)
+}
+
 #[tauri::command]
 pub fn set_task_status(db: State<'_, Db>, id: i64, status: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|_| "database lock poisoned")?;

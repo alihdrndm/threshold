@@ -238,6 +238,14 @@ export function moveTask(
   return invoke<void>("move_task", { id, urgent, important, sortOrder });
 }
 
+/**
+ * Persist one zone's order: each id gets its index as its sort order. Scoped
+ * to the ids given, so renumbering a quadrant leaves the other zones alone.
+ */
+export function reorderTasks(ids: number[]): Promise<void> {
+  return invoke<void>("reorder_tasks", { ids });
+}
+
 export function setTaskStatus(id: number, status: string): Promise<void> {
   return invoke<void>("set_task_status", { id, status });
 }

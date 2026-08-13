@@ -12,6 +12,7 @@ import type { Task } from "@/lib/tauri";
  */
 export function TaskCard({
   task,
+  ordinal,
   onToggleDone,
   onFocus,
   onDelete,
@@ -19,6 +20,8 @@ export function TaskCard({
   sessionRunning = false,
 }: {
   task: Task;
+  /** 1-based place in the zone. Present on the matrix, absent in the list. */
+  ordinal?: number;
   onToggleDone: (task: Task) => void;
   onFocus?: (task: Task) => void;
   onDelete?: (task: Task) => void;
@@ -55,6 +58,20 @@ export function TaskCard({
         "matrix-card group flex items-start gap-3 rounded-xl border px-3 py-2.5 text-sm",
       )}
     >
+      {/* The place, not a bullet: it changes when the card is dragged, which
+          is what makes the order feel real enough to rearrange. aria-hidden
+          because dnd-kit already announces position while sorting, and a list
+          numbered twice reads twice as slowly. Width reserves two digits so
+          ten tasks do not push every title a pixel sideways. */}
+      {ordinal !== undefined && (
+        <span
+          aria-hidden
+          className="mt-1 w-4 shrink-0 text-right text-xs text-[var(--zone-ink-muted)] tabular-nums select-none"
+        >
+          {ordinal}
+        </span>
+      )}
+
       <button
         type="button"
         onClick={() => onToggleDone(task)}

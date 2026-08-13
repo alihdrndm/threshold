@@ -103,12 +103,41 @@ pub fn add(conn: &Connection, task: &NewTask) -> Result<i64, String> {
         return Err("a task needs a title".into());
     }
     conn.execute(
+        // New tasks join the end of the Inbox rather than all landing at 0.
+        // Before zones could be reordered every task carried 0 and creation
+        // order fell out of the id tie-break; once a reorder renumbers a zone
+        // 0..n, a fresh 0 would cut into the middle of an arranged list.
         "INSERT INTO tasks(title, note, context_id, urgent, important, sort_order, status, created_ts)
-         VALUES(?1, ?2, ?3, NULL, NULL, 0, 'open', ?4)",
+         VALUES(?1, ?2, ?3, NULL, NULL,
+                (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM tasks
+                  WHERE status = 'open' AND urgent IS NULL AND important IS NULL),
+                'open', ?4)",
         rusqlite::params![title, task.note, task.context_id, chrono::Utc::now().to_rfc3339()],
     )
     .map_err(|err| format!("could not add task: {err}"))?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Persist a zone's order as the user arranged it: each id gets its index.
+///
+/// Scoped to exactly the ids given - tasks outside the list keep their numbers,
+/// so renumbering one quadrant cannot scramble another, and the `(sort_order,
+/// id)` tie-break keeps legacy all-zero zones in the order they always showed.
+pub fn reorder(conn: &Connection, ids: &[i64]) -> Result<(), String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("could not reorder tasks: {err}"))?;
+    {
+        let mut stmt = tx
+            .prepare("UPDATE tasks SET sort_order = ?1 WHERE id = ?2")
+            .map_err(|err| format!("could not reorder tasks: {err}"))?;
+        for (index, id) in ids.iter().enumerate() {
+            stmt.execute(rusqlite::params![index as i64, id])
+                .map_err(|err| format!("could not reorder tasks: {err}"))?;
+        }
+    }
+    tx.commit()
+        .map_err(|err| format!("could not reorder tasks: {err}"))
 }
 
 /// Move a task to a quadrant. `None`/`None` returns it to the Inbox.
@@ -296,6 +325,58 @@ mod tests {
         let conn = memory_db();
         let id = add(&conn, &new("finish")).unwrap();
         assert!(set_status(&conn, id, "procrastinating").is_err());
+    }
+
+    #[test]
+    fn new_tasks_join_the_inbox_at_the_end() {
+        let conn = memory_db();
+        add(&conn, &new("first")).unwrap();
+        add(&conn, &new("second")).unwrap();
+        let orders: Vec<i64> = open_tasks(&conn).unwrap().iter().map(|t| t.sort_order).collect();
+        assert_eq!(orders, vec![0, 1]);
+    }
+
+    #[test]
+    fn reorder_rewrites_the_listed_order() {
+        let conn = memory_db();
+        let a = add(&conn, &new("a")).unwrap();
+        let b = add(&conn, &new("b")).unwrap();
+        let c = add(&conn, &new("c")).unwrap();
+        reorder(&conn, &[c, a, b]).unwrap();
+        let titles: Vec<String> =
+            open_tasks(&conn).unwrap().into_iter().map(|t| t.title).collect();
+        assert_eq!(titles, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn reorder_leaves_unlisted_tasks_alone() {
+        let conn = memory_db();
+        let a = add(&conn, &new("a")).unwrap();
+        let b = add(&conn, &new("b")).unwrap();
+        let c = add(&conn, &new("c")).unwrap();
+        // Renumber a and c only - b keeps the 1 it was born with, the way a
+        // context filter reordering the visible subset must not move the rest.
+        reorder(&conn, &[c, a]).unwrap();
+        let tasks = open_tasks(&conn).unwrap();
+        let of = |id: i64| tasks.iter().find(|t| t.id == id).unwrap().sort_order;
+        assert_eq!((of(c), of(a), of(b)), (0, 1, 1));
+    }
+
+    #[test]
+    fn the_ritual_chips_follow_the_arranged_order() {
+        let conn = memory_db();
+        let a = add(&conn, &new("second priority")).unwrap();
+        let b = add(&conn, &new("first priority")).unwrap();
+        set_quadrant(&conn, a, Some(true), Some(true), 0).unwrap();
+        set_quadrant(&conn, b, Some(true), Some(true), 0).unwrap();
+        reorder(&conn, &[b, a]).unwrap();
+        let titles: Vec<String> =
+            do_first(&conn, 3).unwrap().into_iter().map(|(_, t)| t).collect();
+        assert_eq!(
+            titles,
+            vec!["first priority".to_string(), "second priority".to_string()],
+            "dragging a task to the top of Do First must also promote its chip"
+        );
     }
 
     #[test]
