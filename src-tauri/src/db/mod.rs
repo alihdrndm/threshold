@@ -238,3 +238,17 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<(), Stri
     .map(|_| ())
     .map_err(|err| format!("could not save {key}: {err}"))
 }
+
+/// The record, erased: sessions first because they point at intentions, then
+/// the intentions themselves. Tasks, quotes and settings are untouched - this
+/// clears the mirror, not the desk.
+///
+/// Deciding whether now is a safe moment (no session mid-flight) belongs to
+/// the caller; this function only knows how to forget, not when.
+pub fn clear_history(conn: &Connection) -> Result<(), String> {
+    conn.execute("DELETE FROM sessions", [])
+        .map_err(|err| format!("could not clear sessions: {err}"))?;
+    conn.execute("DELETE FROM intentions", [])
+        .map_err(|err| format!("could not clear intentions: {err}"))?;
+    Ok(())
+}

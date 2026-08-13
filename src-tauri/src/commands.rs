@@ -730,6 +730,28 @@ pub fn start_again(
     }
 }
 
+/// Start the record over: every session and every intention, gone. Tasks,
+/// quotes and settings stay - this clears the mirror, not the desk.
+///
+/// Refused while a session is open. The banner and the check-in stand on
+/// those rows, and a lock can outlive them; erasing the ground under a live
+/// commitment would leave the block enforcing a session nothing remembers.
+#[tauri::command]
+pub fn clear_history(db: State<'_, Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("could not begin: {err}"))?;
+    if !sessions::open_sessions(&tx)?.is_empty() {
+        return Err(
+            "A session is still open. End it - and answer its check-in - before starting over."
+                .into(),
+        );
+    }
+    db::clear_history(&tx)?;
+    tx.commit().map_err(|err| format!("could not clear: {err}"))
+}
+
 /// Give a task a date: move it to the Schedule quadrant, joining the end.
 #[tauri::command]
 pub fn schedule_task(db: State<'_, Db>, task_id: i64) -> Result<(), String> {

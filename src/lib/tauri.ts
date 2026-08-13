@@ -443,6 +443,14 @@ export function resumeNow(): Promise<void> {
   return invoke<void>("resume_now");
 }
 
+/**
+ * Start the record over: every session and intention, gone for good. Tasks,
+ * quotes and settings stay. Refused while a session is open.
+ */
+export function clearHistory(): Promise<void> {
+  return invoke<void>("clear_history");
+}
+
 export function getSettings(): Promise<[string, string][]> {
   return invoke<[string, string][]>("get_settings");
 }

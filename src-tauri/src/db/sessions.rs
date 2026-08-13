@@ -405,6 +405,24 @@ mod tests {
     }
 
     #[test]
+    fn clearing_history_forgets_sessions_and_intentions_both() {
+        let conn = memory_db();
+        let id = a_session(&conn, 25, 1_000);
+        answer(&conn, id, Answer::DidIt, false, 2_600).unwrap();
+
+        crate::db::clear_history(&conn).unwrap();
+
+        assert!(recent(&conn, 10).unwrap().is_empty());
+        let intentions: i64 = conn
+            .query_row("SELECT COUNT(*) FROM intentions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            intentions, 0,
+            "an intention left behind would seed the next Overview with old data"
+        );
+    }
+
+    #[test]
     fn open_sessions_finds_what_a_killed_run_left_behind() {
         let conn = memory_db();
         let running = a_session(&conn, 25, 1_000);

@@ -3,6 +3,7 @@ import clsx from "clsx";
 import {
   addQuote,
   chooseQuote,
+  clearHistory,
   emergencyUnblock,
   getDiagnostics,
   getSettings,
@@ -42,6 +43,10 @@ export function SettingsView({
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [repair, setRepair] = useState<string | null>(null);
   const [unblock, setUnblock] = useState<string | null>(null);
+  // Armed, then confirmed: the one action here no undo can forgive, so it is
+  // the one place a second click is asked for instead.
+  const [clearArmed, setClearArmed] = useState(false);
+  const [cleared, setCleared] = useState<string | null>(null);
   const [sites, setSites] = useState<string[]>([]);
   const [quotes, setQuotes] = useState<Quote[]>([]);
 
@@ -336,6 +341,50 @@ export function SettingsView({
             </span>
           )}
         </div>
+      </Section>
+
+      {/* Everywhere else this app prefers undo to confirmation - but there is
+          no undo for forgetting, so this one action asks twice. Neutral
+          colours on both buttons: red here would only teach the eye that red
+          means "the thing I clicked on purpose". */}
+      <Section
+        title="Start over"
+        note="This erases the record the Overview is built from — every session and every intention, for good. Tasks, quotes, sites and settings stay. There is no undo."
+      >
+        {clearArmed ? (
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={async () => {
+                try {
+                  await clearHistory();
+                  setCleared("Cleared. The record starts now.");
+                } catch (err) {
+                  setCleared(err instanceof Error ? err.message : String(err));
+                }
+                setClearArmed(false);
+              }}
+            >
+              Yes — erase it all
+            </Button>
+            <Button onClick={() => setClearArmed(false)}>Keep it</Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => {
+                setCleared(null);
+                setClearArmed(true);
+              }}
+            >
+              Clear the record…
+            </Button>
+            {cleared && (
+              <span className="text-xs text-[var(--color-ink-muted)]">
+                {cleared}
+              </span>
+            )}
+          </div>
+        )}
       </Section>
     </div>
   );
