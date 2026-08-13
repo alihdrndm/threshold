@@ -30,8 +30,10 @@ import {
 import { DoneToday, MatrixView } from "./MatrixView";
 import { TaskCard } from "./TaskCard";
 import {
+  PLACE_ORDER,
   inQuadrant,
   orderAfterDrop,
+  placeOf,
   quadrantById,
   quadrantOf,
   type QuadrantId,
@@ -51,6 +53,7 @@ export function TasksView({
   const [view, setView] = useState<View>("matrix");
   const [contextFilter, setContextFilter] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
+  const [search, setSearch] = useState("");
   const [dragging, setDragging] = useState<Task | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; undo: () => void } | null>(
@@ -92,6 +95,26 @@ export function TasksView({
         ? tasks
         : tasks.filter((t) => t.contextId === contextFilter),
     [tasks, contextFilter],
+  );
+
+  // Search reaches across everything - every zone, the Done pile, and past any
+  // context filter. A search that silently honoured a forgotten filter would
+  // answer "it's gone" when the truth is "it's hidden".
+  const query = search.trim().toLowerCase();
+  const results = useMemo(
+    () =>
+      query === ""
+        ? []
+        : tasks
+            .filter((t) => t.title.toLowerCase().includes(query))
+            .map((task) => ({ task, place: placeOf(task) }))
+            // Stable sort: within a zone the board's own order survives.
+            .sort(
+              (a, b) =>
+                PLACE_ORDER.indexOf(a.place.zone) -
+                PLACE_ORDER.indexOf(b.place.zone),
+            ),
+    [tasks, query],
   );
 
   /// Every action reports its own failure. Previously each was fired with
@@ -238,15 +261,29 @@ export function TasksView({
         </div>
       </header>
 
-      <input
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") run(() => submitDraft());
-        }}
-        placeholder="Add a task"
-        className="ritual-field w-full rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-5 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
-      />
+      {/* Two fields, two verbs: the wide one adds, the narrow one finds. One
+          field doing both would need a mode, and a mode needs explaining. */}
+      <div className="flex gap-3">
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") run(() => submitDraft());
+          }}
+          placeholder="Add a task"
+          className="ritual-field min-w-0 flex-1 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-5 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+        />
+        <input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setSearch("");
+          }}
+          placeholder="Search"
+          aria-label="Search all tasks"
+          className="ritual-field w-56 shrink-0 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-5 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+        />
+      </div>
 
       {error && (
         <p className="rounded-xl border border-[var(--color-accent)]/50 bg-[var(--color-accent)]/[0.08] px-4 py-2.5 text-sm text-[var(--color-ink)]">
@@ -280,7 +317,17 @@ export function TasksView({
         onDragEnd={onDragEnd}
       >
         <div className="min-h-0 flex-1 overflow-auto">
-          {view === "matrix" ? (
+          {query !== "" ? (
+            <SearchResults
+              results={results}
+              query={search.trim()}
+              onToggleDone={(t) => run(() => toggleDone(t))}
+              onFocus={(t) => run(() => focus(t))}
+              onDelete={(t) => run(() => deleteTask(t))}
+              activeTaskId={activeTaskId}
+              sessionRunning={sessionRunning}
+            />
+          ) : view === "matrix" ? (
             <MatrixView
               tasks={visible}
               onToggleDone={(t) => run(() => toggleDone(t))}
@@ -310,6 +357,64 @@ export function TasksView({
           )}
         </DragOverlay>
       </DndContext>
+    </div>
+  );
+}
+
+/**
+ * Every task that matches, each carrying where it lives - the quadrant's own
+ * tint on the card and its name in small caps. On the board position is the
+ * category; a result has left its position behind, so it brings the answer.
+ */
+function SearchResults({
+  results,
+  query,
+  onToggleDone,
+  onFocus,
+  onDelete,
+  activeTaskId,
+  sessionRunning,
+}: {
+  results: { task: Task; place: { zone: string; label: string } }[];
+  query: string;
+  onToggleDone: (task: Task) => void;
+  onFocus: (task: Task) => void;
+  onDelete: (task: Task) => void;
+  activeTaskId: number | null;
+  sessionRunning: boolean;
+}) {
+  if (results.length === 0) {
+    return (
+      <p className="text-sm text-[var(--color-ink-muted)]">
+        Nothing matches “{query}”.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {/* aria-live, so a screen reader hears the count change as the query
+          narrows without having to leave the search field to check. */}
+      <p aria-live="polite" className="text-xs text-[var(--color-ink-muted)]">
+        {results.length === 1 ? "One match" : `${results.length} matches`}
+      </p>
+      {results.map(({ task, place }) => (
+        // The wrapper borrows the zone's identity the same way a zone does:
+        // data-zone sets --zone-fill, .search-hit maps it to --zone-bg, and
+        // the card inside needs to know nothing about search.
+        <div key={task.id} data-zone={place.zone} className="search-hit">
+          <TaskCard
+            task={task}
+            place={place.label}
+            sortable={false}
+            onToggleDone={onToggleDone}
+            onFocus={onFocus}
+            onDelete={onDelete}
+            active={task.id === activeTaskId}
+            sessionRunning={sessionRunning}
+          />
+        </div>
+      ))}
     </div>
   );
 }

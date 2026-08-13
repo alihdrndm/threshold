@@ -13,6 +13,8 @@ import type { Task } from "@/lib/tauri";
 export function TaskCard({
   task,
   ordinal,
+  place,
+  sortable = true,
   onToggleDone,
   onFocus,
   onDelete,
@@ -22,6 +24,10 @@ export function TaskCard({
   task: Task;
   /** 1-based place in the zone. Present on the matrix, absent in the list. */
   ordinal?: number;
+  /** Where the task lives, named. Search results carry it; the board is it. */
+  place?: string;
+  /** False in search results: a flat filtered list has no order to rearrange. */
+  sortable?: boolean;
   onToggleDone: (task: Task) => void;
   onFocus?: (task: Task) => void;
   onDelete?: (task: Task) => void;
@@ -31,7 +37,7 @@ export function TaskCard({
   sessionRunning?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: task.id });
+    useSortable({ id: task.id, disabled: !sortable });
 
   const done = task.status === "done";
 
@@ -108,15 +114,25 @@ export function TaskCard({
           `min-w-0` still matters: without it the span takes its full text
           width and pushes the buttons past the edge of the card. */}
       <span
-        {...attributes}
-        {...listeners}
+        {...(sortable ? attributes : {})}
+        {...(sortable ? listeners : {})}
         className={clsx(
-          "mt-[3px] min-w-0 flex-1 cursor-grab leading-snug break-words active:cursor-grabbing",
+          "mt-[3px] min-w-0 flex-1 leading-snug break-words",
+          sortable && "cursor-grab active:cursor-grabbing",
           done && "text-[var(--zone-ink-muted)] line-through",
         )}
       >
         {task.title}
       </span>
+
+      {/* Quieter and smaller than the zone headers that share its vocabulary:
+          on the board the category is a place you look at, here it is a fact
+          attached to someone else's answer. */}
+      {place && (
+        <span className="mt-[5px] shrink-0 text-[10px] tracking-[0.14em] uppercase text-[var(--zone-ink-muted)] select-none">
+          {place}
+        </span>
+      )}
 
       {/* Always visible rather than revealed on hover: a control you cannot see
           is a control most people never find. */}

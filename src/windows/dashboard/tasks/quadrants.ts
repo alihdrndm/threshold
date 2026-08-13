@@ -88,6 +88,29 @@ export function quadrantById(id: QuadrantId): Quadrant {
   return QUADRANTS.find((q) => q.id === id) ?? INBOX;
 }
 
+/**
+ * Where a task lives right now, the Done pile included.
+ *
+ * Search needs this where the board does not: on the matrix, position IS the
+ * category, but a search result has left its position behind and must carry
+ * the answer with it.
+ */
+export function placeOf(task: Task): { zone: QuadrantId | "done"; label: string } {
+  if (task.status === "done") return { zone: "done", label: "Done" };
+  const quadrant = quadrantById(quadrantOf(task));
+  return { zone: quadrant.id, label: quadrant.label };
+}
+
+/** The board's own reading order - the tray, the four quadrants, Done last. */
+export const PLACE_ORDER: readonly string[] = [
+  "inbox",
+  "do-first",
+  "schedule",
+  "delegate",
+  "eliminate",
+  "done",
+];
+
 /** Zone membership. The Inbox owns anything not yet fully classified. */
 export function inQuadrant(task: Task, quadrant: Quadrant): boolean {
   return quadrant.urgent === null

@@ -399,6 +399,14 @@ textarea {
   transition-duration: 100ms;
 }
 
+/* A search result borrows its zone's tint without being a zone: the wrapper
+   carries data-zone, which sets --zone-fill above, and this maps it onto the
+   card the same way .matrix-zone does - minus the zone's own background, so a
+   result is a coloured card on the plain page, not a one-card quadrant. */
+.search-hit {
+  --zone-bg: var(--zone-fill);
+}
+
 /* Cards derive from whatever surface they sit on, so the card component needs
    no knowledge of quadrants and still works in the list view via the :root
    fallback above. */

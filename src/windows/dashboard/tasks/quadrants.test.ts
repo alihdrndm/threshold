@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "@/lib/tauri";
-import { INBOX, inQuadrant, orderAfterDrop, quadrantById } from "./quadrants";
+import {
+  INBOX,
+  PLACE_ORDER,
+  inQuadrant,
+  orderAfterDrop,
+  placeOf,
+  quadrantById,
+} from "./quadrants";
 
 function task(id: number, flags?: { urgent: boolean; important: boolean }): Task {
   return {
@@ -35,6 +42,26 @@ describe("inQuadrant", () => {
     expect(inQuadrant(task(2, { urgent: true, important: false }), doFirst)).toBe(
       false,
     );
+  });
+});
+
+describe("placeOf", () => {
+  it("names the quadrant a task sits in", () => {
+    expect(placeOf(task(1, { urgent: true, important: true })).label).toBe(
+      "Do First",
+    );
+    expect(placeOf(task(2)).label).toBe("Inbox");
+  });
+
+  it("puts a finished task in Done regardless of its flags", () => {
+    const finished = { ...task(1, { urgent: true, important: true }), status: "done" as const };
+    expect(placeOf(finished)).toEqual({ zone: "done", label: "Done" });
+  });
+
+  it("orders every place it can name", () => {
+    // A zone missing from PLACE_ORDER would sort to the front via indexOf -1.
+    expect(PLACE_ORDER).toContain(placeOf(task(1)).zone);
+    expect(PLACE_ORDER).toContain(placeOf({ ...task(2), status: "done" as const }).zone);
   });
 });
 
