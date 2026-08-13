@@ -161,6 +161,38 @@ pub fn set_quadrant(
     .map_err(|err| format!("could not move task: {err}"))
 }
 
+/// Move a task to a quadrant, joining the end of whatever is already there.
+///
+/// `set_quadrant` takes the caller's word for a position; this one asks the
+/// zone. It exists for callers who are not looking at the board - the check-in
+/// scheduling a task cannot know where the Schedule quadrant currently ends.
+/// `IS`, not `=`: both flags may be NULL, and `= NULL` matches nothing.
+pub fn append_to_quadrant(
+    conn: &Connection,
+    id: i64,
+    urgent: Option<bool>,
+    important: Option<bool>,
+) -> Result<(), String> {
+    let changed = conn
+        .execute(
+            "UPDATE tasks SET urgent = ?1, important = ?2,
+                    sort_order = (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM tasks
+                                   WHERE status = 'open' AND urgent IS ?1 AND important IS ?2
+                                     AND id != ?3)
+             WHERE id = ?3",
+            rusqlite::params![
+                urgent.map(|v| v as i64),
+                important.map(|v| v as i64),
+                id
+            ],
+        )
+        .map_err(|err| format!("could not move task: {err}"))?;
+    if changed == 0 {
+        return Err(format!("no task with id {id}"));
+    }
+    Ok(())
+}
+
 pub fn set_status(conn: &Connection, id: i64, status: &str) -> Result<(), String> {
     if !matches!(status, "open" | "done" | "archived" | "deleted") {
         return Err(format!("unknown status: {status}"));
@@ -325,6 +357,22 @@ mod tests {
         let conn = memory_db();
         let id = add(&conn, &new("finish")).unwrap();
         assert!(set_status(&conn, id, "procrastinating").is_err());
+    }
+
+    #[test]
+    fn appending_joins_the_end_of_the_quadrant() {
+        let conn = memory_db();
+        let settled = add(&conn, &new("already scheduled")).unwrap();
+        set_quadrant(&conn, settled, Some(false), Some(true), 5).unwrap();
+        let arriving = add(&conn, &new("scheduled from the check-in")).unwrap();
+        append_to_quadrant(&conn, arriving, Some(false), Some(true)).unwrap();
+
+        let tasks = open_tasks(&conn).unwrap();
+        let task = tasks.iter().find(|t| t.id == arriving).unwrap();
+        assert_eq!(task.urgent, Some(false));
+        assert_eq!(task.important, Some(true));
+        assert_eq!(task.sort_order, 6, "after the settled task, not among it");
+        assert!(append_to_quadrant(&conn, 999, Some(false), Some(true)).is_err());
     }
 
     #[test]

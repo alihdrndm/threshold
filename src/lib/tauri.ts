@@ -394,6 +394,42 @@ export function dismissCheckin(sessionId: number): Promise<void> {
   return invoke<void>("dismiss_checkin", { sessionId });
 }
 
+export interface ContinueResult {
+  sessionId: number;
+  /** Present when the last slice blocked or asked to; re-armed the same way. */
+  block: BlockOutcome | null;
+}
+
+/**
+ * "Keep going now": record the answer, then start another slice on the same
+ * subject with the same selections - only the length is asked again.
+ */
+export function continueSession(
+  sessionId: number,
+  answer: CheckinAnswer,
+  minutes: number,
+): Promise<ContinueResult> {
+  return invoke<ContinueResult>("continue_session", {
+    sessionId,
+    answer,
+    minutes,
+  });
+}
+
+/**
+ * "Start it again": reopen the ritual for what this session was about, every
+ * option asked afresh. Does not record the check-in answer - do that once
+ * `opened` comes back true, so a refusal leaves the question and its reason.
+ */
+export function startAgain(sessionId: number): Promise<FocusResult> {
+  return invoke<FocusResult>("start_again", { sessionId });
+}
+
+/** Give a task a date: move it to the Schedule quadrant, joining the end. */
+export function scheduleTask(taskId: number): Promise<void> {
+  return invoke<void>("schedule_task", { taskId });
+}
+
 /** Unix seconds a pause runs until, or null when nothing is paused. */
 export function pauseStatus(): Promise<number | null> {
   return invoke<number | null>("pause_status");

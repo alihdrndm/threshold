@@ -588,6 +588,155 @@ pub fn answer_checkin(
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContinueResult {
+    pub session_id: i64,
+    /// Present when the last slice was enforced or chose categories - the same
+    /// selections, re-armed. `blocked: false` carries the reason.
+    pub block: Option<crate::session::BlockOutcome>,
+}
+
+/// "Partly - keep going now": record the answer, then start another slice on
+/// the same subject with the same selections, only the length asked again.
+///
+/// The prediction is deliberately not carried over: the check-in scores answers
+/// against predictions, and a prediction nobody re-made must not be re-scored.
+/// `async` because arming waits on the elevated helper for up to twelve
+/// seconds, which would freeze every window from the main thread.
+#[tauri::command(async)]
+pub fn continue_session(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    session_id: i64,
+    answer: sessions::Answer,
+    minutes: i64,
+) -> Result<ContinueResult, String> {
+    let now = chrono::Utc::now().timestamp();
+    let minutes = minutes.clamp(1, MAX_DURATION_MIN);
+
+    let (new_id, categories, custom, should_block) = {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|err| format!("could not begin: {err}"))?;
+
+        let row = sessions::by_id(&tx, session_id)?
+            .ok_or_else(|| format!("no session with id {session_id}"))?;
+
+        // The answer first, the continuation second: a failure further along
+        // must lose the new slice, never what was said about the old one.
+        sessions::answer(&tx, session_id, answer, false, now)?;
+
+        // Same guard as finish_ritual: a row left running by a killed process
+        // holds the one running slot and would refuse the insert.
+        if let Some(stale) = sessions::live(&tx)? {
+            sessions::mark(&tx, stale.id, sessions::State::Unanswered, Some(now))?;
+        }
+
+        let new_id = sessions::start(
+            &tx,
+            &sessions::NewSession {
+                intention_id: row.intention_id,
+                task_id: row.task_id,
+                task_title: row.task_title.clone(),
+                duration_min: minutes,
+                categories: row.categories.clone(),
+                predicted_yes: None,
+            },
+            now,
+        )?;
+        tx.commit().map_err(|err| format!("could not save: {err}"))?;
+
+        let categories = split_categories(row.categories.as_deref());
+        // The sites ride along from the saved list, exactly as a new ritual
+        // would read them - the session row never stored them.
+        let saved = db::get_setting(&conn, "custom_sites").unwrap_or_default();
+        let (custom, _) = split_sites(Some(saved.as_str()));
+
+        // Block again only if the last slice blocked, or at least asked to:
+        // continuing must not conjure an enforcement nobody selected.
+        let should_block = row.enforced || !split_categories(row.categories.as_deref()).is_empty();
+        (new_id, categories, custom, should_block)
+    };
+
+    let block = if should_block && !(categories.is_empty() && custom.is_empty()) {
+        let outcome = crate::session::arm(&categories, &custom, minutes);
+        if outcome.blocked {
+            if let Some(lock) = crate::session::active_lock() {
+                let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+                sessions::confirm_block(&conn, new_id, lock.locked_until)?;
+            }
+        }
+        Some(outcome)
+    } else {
+        None
+    };
+
+    let enforced = block.as_ref().is_some_and(|outcome| outcome.blocked);
+    crate::triggers::note_session_until(now + minutes * 60, enforced);
+
+    crate::checkin::close(&app);
+    crate::session::announce_ended(&app, session_id, "answered");
+    crate::session::announce_started(&app, new_id);
+
+    Ok(ContinueResult {
+        session_id: new_id,
+        block,
+    })
+}
+
+/// "Start it again": reopen the ritual for what this session was about, every
+/// option asked afresh - intention, prediction, length, what to quiet.
+///
+/// Express when the subject is known (the question was already answered once);
+/// the full arrival otherwise, because a blank express screen asks nothing.
+/// Does not record the check-in answer - the caller does that once the ritual
+/// has actually opened, so a refusal (paused, session already running) leaves
+/// the question on screen with the reason instead of eating both.
+#[tauri::command(async)]
+pub fn start_again(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    session_id: i64,
+) -> Result<FocusResult, String> {
+    let (intent, task_id) = {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        let row = sessions::by_id(&conn, session_id)?
+            .ok_or_else(|| format!("no session with id {session_id}"))?;
+        // A task deleted while the question sat on screen must not be pointed
+        // at: the title still carries the subject, the link would dangle.
+        let task_id = row
+            .task_id
+            .filter(|id| tasks::is_open(&conn, *id).unwrap_or(false));
+        (row.task_title, task_id)
+    };
+
+    let prefill = crate::popup::Prefill {
+        express: intent.is_some(),
+        intent,
+        task_id,
+    };
+
+    match crate::triggers::request_focus(&app, prefill) {
+        Ok(()) => Ok(FocusResult {
+            opened: true,
+            reason: None,
+        }),
+        Err(reason) => Ok(FocusResult {
+            opened: false,
+            reason: Some(reason),
+        }),
+    }
+}
+
+/// Give a task a date: move it to the Schedule quadrant, joining the end.
+#[tauri::command]
+pub fn schedule_task(db: State<'_, Db>, task_id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    tasks::append_to_quadrant(&conn, task_id, Some(false), Some(true))
+}
+
 /// Closed without answering.
 ///
 /// Recorded as its own outcome, never as a "no". A question you cannot decline

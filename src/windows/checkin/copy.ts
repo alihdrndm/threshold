@@ -37,6 +37,29 @@ export const CHECKIN = {
   markDone: "Mark this task done",
   dismiss: "Not now",
 
+  /**
+   * The follow-up, asked flatly. "Partly" and "not this time" both leave
+   * something unfinished, and the moment of admitting that is exactly when a
+   * next step is cheap to take - but every road must include "just note it",
+   * because the check-in is a question, never a commitment machine.
+   */
+  partly: {
+    headline: "There's some left, then.",
+    keepGoing: "Keep going now",
+  },
+  again: {
+    headline: "Want another run at it?",
+    startAgain: "Start it again",
+  },
+  // The Schedule quadrant's own words - "For what deserves a date" - so the
+  // button and the place it sends the task to speak the same sentence.
+  schedule: "Give it a date",
+  justNote: "Just note it",
+
+  /** Only the length is asked; everything else rides along from last time. */
+  timeHeadline: "How much longer?",
+  minutesLabel: (minutes: number) => `${minutes} min`,
+
   /** Said only when true, and said plainly rather than apologetically. */
   blockHeld: (minutes: number) =>
     `Your sites stay quiet for about ${minutes} more ${minutes === 1 ? "minute" : "minutes"}.`,

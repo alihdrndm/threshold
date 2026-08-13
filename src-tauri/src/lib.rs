@@ -74,6 +74,9 @@ pub fn run() {
             commands::end_session_early,
             commands::pending_checkin,
             commands::answer_checkin,
+            commands::continue_session,
+            commands::start_again,
+            commands::schedule_task,
             commands::dismiss_checkin,
         ])
         .setup(|app| {
