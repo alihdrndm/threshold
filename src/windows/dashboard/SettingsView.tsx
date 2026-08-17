@@ -298,13 +298,44 @@ export function SettingsView({
         </p>
         <p className="max-w-prose text-sm text-[var(--color-ink-muted)]">
           A blocked site fails with a plain connection error, and Threshold
-          answers in the corner with a quote you chose — the attempt lands on an
-          address this app is listening at, which is how it knows an urge
-          arrived. One honest caveat: a site you visited moments before the
-          block may keep working for up to a minute, and the reverse after it
-          lifts. Browsers remember addresses briefly, and that memory belongs to
-          them.
+          answers in the middle of the screen with a quote you chose — the
+          attempt lands on an address this app is listening at, which is how it
+          knows an urge arrived. One honest caveat: a site you visited moments
+          before the block may keep working for up to a minute, and the reverse
+          after it lifts. Browsers remember addresses briefly, and that memory
+          belongs to them.
         </p>
+      </Section>
+
+      {/* The chime is on by default and yours to turn off. Same shape as the
+          appearance control: a choice between named states, not a switch
+          whose "on" side you have to guess. */}
+      <Section
+        title="Sound at the wall"
+        note="Two soft notes when the quote appears, so it is heard as well as seen. Off keeps the quote and drops the sound."
+      >
+        <div role="radiogroup" aria-label="Sound at the wall" className="flex flex-wrap gap-2">
+          {(["on", "off"] as const).map((option) => {
+            const on = (values.wall_sound ?? "on") === option;
+            return (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                onClick={() => void update("wall_sound", option)}
+                className={clsx(
+                  "ritual-pressable rounded-full border px-4 py-2 text-sm capitalize",
+                  on
+                    ? "border-[var(--color-accent)] text-[var(--color-ink)]"
+                    : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
+                )}
+              >
+                {option}
+              </button>
+            );
+          })}
+        </div>
       </Section>
 
       {/* Stated plainly rather than buried. A commitment you cannot leave is a

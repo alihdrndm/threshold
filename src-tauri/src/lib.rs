@@ -78,6 +78,7 @@ pub fn run() {
             commands::start_again,
             commands::schedule_task,
             commands::clear_history,
+            commands::dismiss_wall,
             commands::dismiss_checkin,
         ])
         .setup(|app| {

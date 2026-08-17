@@ -483,6 +483,137 @@ textarea {
   box-shadow: 0 14px 32px -10px rgb(0 0 0 / 0.22);
 }
 
+/* ---------------------------------------------------------------------------
+   The wall — a fragment of the ritual, mid-screen, for twelve seconds.
+
+   The window is transparent and the card is the shape; the glow and the shadow
+   bleed into the margin the page leaves around it. It carries the day's
+   palette through data-theme exactly as the ritual does, so it is dark always
+   and its light is whichever accent today wears.
+   --------------------------------------------------------------------------- */
+
+/* Only the wall's document paints nothing behind itself. Scoped by attribute
+   rather than by window label because the stylesheet cannot see labels, and a
+   transparent body under the dashboard would show the desktop through it. */
+:root[data-window="blocked"],
+:root[data-window="blocked"] body {
+  background-color: transparent;
+}
+
+.wall-card {
+  /* A hair short of opaque, so the browser's failure is felt through it as a
+     tone rather than seen through it as text: the card sits in front of the
+     moment without pretending the moment is not there. */
+  background-color: color-mix(in srgb, var(--color-surface-raised) 94%, transparent);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow:
+    0 32px 80px -24px rgb(0 0 0 / 0.75),
+    inset 0 1px 0 rgb(255 255 255 / 0.04);
+  /* A modal-shaped thing keeps its origin at centre: nothing summoned it from
+     a corner. From 0.96, never from nothing, over the same strong curve every
+     other entrance here uses; a shade longer than a dropdown because it is
+     the only thing arriving. */
+  transform-origin: center;
+  animation: wall-in 260ms var(--ease-out) both;
+}
+
+@keyframes wall-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Out faster than in, and by less: leaving is the system responding, not the
+   user watching. `forwards` so the last frame holds until Rust takes the
+   window down. */
+.wall-card[data-leaving] {
+  animation: wall-out 220ms var(--ease-out) forwards;
+}
+
+@keyframes wall-out {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+/* The ritual's glow at the card's scale, sitting behind the words. Fixed in
+   pixels rather than vw: the window is 720 wide and the light should fill the
+   card, not the screen it happens to be on. */
+.wall-glow {
+  width: 640px;
+  /* Enters, then breathes: the ritual's glow-in followed by the ritual's pace,
+     with the centring translate kept in every frame - the ritual's own breath
+     keyframes belong to a ring that is centred by layout, and would throw
+     this off-centre. Slower than the ring on purpose: a light breathes, a
+     ring pulses. */
+  animation:
+    glow-in 280ms var(--ease-out) both,
+    wall-breathe 4s ease-in-out 280ms infinite;
+}
+
+@keyframes wall-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* A display serif that is already on every Windows machine, so a twelve-second
+   window never flashes a fallback while a webfont downloads. Constantia is a
+   humanist face cut for screens; Palatino and Georgia stand in behind it.
+   Left-aligned, not centred: a centred multi-line serif is a greeting card. */
+.wall-quote {
+  font-family:
+    "Constantia", "Palatino Linotype", "Book Antiqua", Georgia, "Times New Roman",
+    serif;
+  font-weight: 400;
+  line-height: 1.22;
+  letter-spacing: -0.005em;
+}
+.wall-quote[data-size="lg"] {
+  font-size: 34px;
+}
+.wall-quote[data-size="md"] {
+  font-size: 27px;
+}
+.wall-quote[data-size="sm"] {
+  font-size: 21px;
+  line-height: 1.32;
+}
+
+/* The one honest piece of chrome. Linear, because it is constant motion and
+   a clock; scaleX rather than width, because it runs for the card's whole
+   life and must never touch layout. Its length is the window's, read from the
+   variable the page sets from what Rust said. */
+.wall-drain {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2px;
+  background-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  transform-origin: left;
+  animation: wall-drain var(--wall-linger, 12s) linear both;
+}
+
+@keyframes wall-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
 /* The one strip under the tab bar. Opacity only: the row's height appears in a
    single frame either way, and animating that height is both expensive and a
    lie about when the state began. Removal is instant - nothing is faster than
@@ -564,6 +695,27 @@ textarea {
   /* Keep the fade — it carries the sense that a step changed — drop the rise. */
   .ritual-step > * {
     animation: step-item-reduced 200ms ease both;
+  }
+  /* The wall keeps its fade in and out; the rise, the settle and the drain go.
+     Without the drain the card still leaves on its own - it just no longer
+     announces when. */
+  .wall-card {
+    animation-name: banner-in;
+  }
+  .wall-card[data-leaving] {
+    animation-name: wall-out-reduced;
+  }
+  @keyframes wall-out-reduced {
+    to {
+      opacity: 0;
+    }
+  }
+  .wall-drain {
+    display: none;
+  }
+  .wall-glow {
+    animation: none;
+    opacity: 0.7;
   }
   @keyframes step-item-reduced {
     from {

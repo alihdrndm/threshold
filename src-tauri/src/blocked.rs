@@ -1,10 +1,13 @@
 //! The window that answers a blocked site.
 //!
-//! Small, in the corner, and gone on its own. Not the ritual: the ritual takes
-//! the whole screen because it stands at a threshold where nothing is decided
-//! yet. Here everything is already decided — you committed, and the block held.
-//! A fullscreen takeover at that moment would be a scolding, and scolding is
-//! what makes people defeat a tool rather than use it.
+//! In the middle of the screen, briefly, and gone on its own. Not the ritual:
+//! the ritual takes the whole screen because it stands at a threshold where
+//! nothing is decided yet. Here everything is already decided — you committed,
+//! and the block held. A fullscreen takeover at that moment would be a
+//! scolding, and scolding is what makes people defeat a tool rather than use
+//! it. But a card in the corner was too easy to never see, and a line you chose
+//! for exactly this moment deserves to be met — so it stands where the eye
+//! already is, over the browser that just failed, and steps aside by itself.
 //!
 //! It carries one thing: a line the user chose. Not a lecture, not a counter, no
 //! mention of what was reached for — naming the thing you are avoiding makes it
@@ -20,14 +23,18 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const LABEL: &str = "blocked";
 
-const WIDTH: f64 = 420.0;
-const HEIGHT: f64 = 220.0;
-const INSET: f64 = 24.0;
+/// Logical size. Room for a long line in a display serif at a size that can be
+/// read from where you sit, plus a margin the card's shadow and glow can bleed
+/// into - the window is transparent, so the card is the shape you see.
+const WIDTH: f64 = 720.0;
+const HEIGHT: f64 = 400.0;
 
 /// How long it stays before removing itself.
 ///
 /// It is answering a moment, not opening a conversation, and it takes no focus —
-/// so nothing would ever close it otherwise. Long enough to read twice.
+/// so nothing would ever close it otherwise. Long enough to read twice. Sent to
+/// the page as well, so the drain line and the exit fade end when the window
+/// does rather than a second before or after.
 const LINGER: std::time::Duration = std::time::Duration::from_secs(12);
 
 pub fn close(app: &AppHandle) {
@@ -58,6 +65,28 @@ pub fn show(app: &AppHandle, host: Option<&str>) {
     }
 }
 
+/// Where the card goes: the optical centre of the screen the cursor is on.
+///
+/// The cursor's monitor rather than the primary one, because the browser that
+/// just failed is where the cursor is. A little above true centre - 42% of the
+/// free height rather than 50% - which is where the eye expects a centred
+/// thing to be; dead centre reads as slightly low.
+fn place(window: &tauri::WebviewWindow) -> Option<tauri::LogicalPosition<f64>> {
+    let app = window.app_handle();
+    let monitor = app
+        .cursor_position()
+        .ok()
+        .and_then(|cursor| app.monitor_from_point(cursor.x, cursor.y).ok().flatten())
+        .or_else(|| window.primary_monitor().ok().flatten())?;
+    let scale = monitor.scale_factor();
+    let size = monitor.size().to_logical::<f64>(scale);
+    let origin = monitor.position().to_logical::<f64>(scale);
+    Some(tauri::LogicalPosition::new(
+        origin.x + (size.width - WIDTH) / 2.0,
+        origin.y + (size.height - HEIGHT) * 0.42,
+    ))
+}
+
 fn open(app: &AppHandle, host: Option<&str>) -> tauri::Result<()> {
     // A ritual is a fullscreen takeover; putting this on top of one would be two
     // windows arguing. The ritual is also the better place to be.
@@ -75,25 +104,35 @@ fn open(app: &AppHandle, host: Option<&str>) -> tauri::Result<()> {
     let window = WebviewWindowBuilder::new(
         app,
         LABEL,
-        WebviewUrl::App(format!("index.html?window=blocked{query}").into()),
+        WebviewUrl::App(
+            format!(
+                "index.html?window=blocked&linger={}{query}",
+                LINGER.as_millis()
+            )
+            .into(),
+        ),
     )
     .title("Threshold")
+    .theme(Some(tauri::Theme::Dark))
     .inner_size(WIDTH, HEIGHT)
     .resizable(false)
     .decorations(false)
+    // The card draws its own shape; the window is only the space it floats in.
+    .transparent(true)
     .always_on_top(true)
-    .skip_taskbar(false)
+    .skip_taskbar(true)
     .visible(false)
+    // The chime plays with nobody having clicked - Chromium would otherwise
+    // hold it for a gesture that never comes. The feature list is wry's own
+    // default, restated because setting any argument replaces it wholesale.
+    .additional_browser_args(
+        "--autoplay-policy=no-user-gesture-required \
+         --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+    )
     .build()?;
 
-    if let Ok(Some(monitor)) = window.primary_monitor() {
-        let scale = monitor.scale_factor();
-        let size = monitor.size().to_logical::<f64>(scale);
-        let position = monitor.position().to_logical::<f64>(scale);
-        let _ = window.set_position(tauri::LogicalPosition::new(
-            position.x + size.width - WIDTH - INSET,
-            position.y + size.height - HEIGHT - INSET * 2.0,
-        ));
+    if let Some(position) = place(&window) {
+        let _ = window.set_position(position);
     }
 
     // Already on the main thread — `show` scheduled us here — so this is a plain

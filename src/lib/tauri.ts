@@ -190,6 +190,11 @@ export function chooseQuote(
   return invoke<void>("choose_quote", { surface, id });
 }
 
+/** Send the wall away before its time. It records nothing. */
+export function dismissWall(): Promise<void> {
+  return invoke<void>("dismiss_wall");
+}
+
 export function dataLocation(): Promise<string> {
   return invoke<string>("data_location");
 }

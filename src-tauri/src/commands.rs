@@ -759,6 +759,14 @@ pub fn schedule_task(db: State<'_, Db>, task_id: i64) -> Result<(), String> {
     tasks::append_to_quadrant(&conn, task_id, Some(false), Some(true))
 }
 
+/// The wall, sent away early by a click. It would have left on its own; this
+/// only shortens the wait, and records nothing - a wall you can wave off is
+/// one you will not learn to resent.
+#[tauri::command]
+pub fn dismiss_wall(app: tauri::AppHandle) {
+    crate::blocked::close(&app);
+}
+
 /// Closed without answering.
 ///
 /// Recorded as its own outcome, never as a "no". A question you cannot decline
