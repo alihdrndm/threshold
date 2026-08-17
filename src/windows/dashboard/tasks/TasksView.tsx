@@ -24,6 +24,8 @@ import {
   listContexts,
   listTasks,
   moveTask,
+  removeContext,
+  renameContext,
   reorderTasks,
   setTaskContext,
   setTaskStatus,
@@ -75,6 +77,15 @@ export function TasksView({
   const [lit, setLit] = useState(0);
   const [newArea, setNewArea] = useState<string | null>(null);
   const closeCompletions = useCallback(() => setCaret(0), []);
+  // The menu on an area chip (rename / remove), and a chip mid-rename.
+  const [chipMenu, setChipMenu] = useState<{
+    context: TaskContext;
+    anchor: HTMLElement;
+  } | null>(null);
+  const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(
+    null,
+  );
+  const closeChipMenu = useCallback(() => setChipMenu(null), []);
 
   useEffect(
     () => () => {
@@ -193,6 +204,39 @@ export function TasksView({
     const at = tag.start + name.length + 2;
     setCaret(at);
     requestAnimationFrame(() => draftField.current?.setSelectionRange(at, at));
+  }
+
+  async function renameArea(id: number, name: string) {
+    setRenaming(null);
+    if (!name.trim()) return;
+    setContexts(await renameContext(id, name));
+  }
+
+  /// Removing an area unlabels its tasks and nothing more - and even that is
+  /// undoable: the notice remembers which tasks wore the name, and Undo makes
+  /// the area again and hands it back to them. No dialog, same as a task.
+  async function removeArea(context: TaskContext) {
+    const wearers = tasks.filter((t) => t.contextId === context.id).map((t) => t.id);
+    if (contextFilter === context.id) setContextFilter(null);
+    setContexts(await removeContext(context.id));
+    await refresh();
+    say(
+      wearers.length === 0
+        ? `Removed “${context.name}”`
+        : `Removed “${context.name}” — ${wearers.length} ${wearers.length === 1 ? "task" : "tasks"} now without an area`,
+      {
+        label: "Undo",
+        run: () =>
+          run(async () => {
+            setNotice(null);
+            const made = await makeArea(context.name);
+            if (made) {
+              await Promise.all(wearers.map((id) => setTaskContext(id, made.id)));
+            }
+            await refresh();
+          }),
+      },
+    );
   }
 
   async function setArea(task: Task, contextId: number | null) {
@@ -370,19 +414,78 @@ export function TasksView({
           >
             All
           </Chip>
-          {contexts.map((context) => (
-            <Chip
-              key={context.id}
-              dropId={`area:${context.id}`}
-              active={contextFilter === context.id}
-              onClick={() => setContextFilter(context.id)}
-            >
-              {context.name}
-            </Chip>
-          ))}
-          {/* One more, where the areas are. Rename and remove live in
-              Settings: here you are looking at tasks, not administering
-              labels, and the one gesture that belongs here is "another". */}
+          {contexts.map((context) =>
+            renaming?.id === context.id ? (
+              <input
+                key={context.id}
+                autoFocus
+                value={renaming.name}
+                onChange={(event) =>
+                  setRenaming({ id: context.id, name: event.target.value })
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter")
+                    run(() => renameArea(context.id, renaming.name));
+                  if (event.key === "Escape") setRenaming(null);
+                }}
+                onBlur={() => setRenaming(null)}
+                aria-label={`Rename ${context.name}`}
+                className="ritual-field w-32 rounded-full border border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)] bg-[var(--color-fill-subtle)] px-3 py-1.5 text-xs text-[var(--color-ink)] outline-none"
+              />
+            ) : (
+              <Chip
+                key={context.id}
+                dropId={`area:${context.id}`}
+                active={contextFilter === context.id}
+                // A second click on the chip already filtering is otherwise a
+                // no-op, so it opens the chip's own menu; right-click does the
+                // same from any state. Rename and remove also live in Settings.
+                onClick={(anchor) =>
+                  contextFilter === context.id
+                    ? setChipMenu({ context, anchor })
+                    : setContextFilter(context.id)
+                }
+                onMenu={(anchor) => setChipMenu({ context, anchor })}
+              >
+                {context.name}
+              </Chip>
+            ),
+          )}
+          {chipMenu && (
+            <Popover anchor={chipMenu.anchor} role="menu" onClose={closeChipMenu}>
+              <li role="none">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    const { context } = chipMenu;
+                    setChipMenu(null);
+                    setRenaming({ id: context.id, name: context.name });
+                  }}
+                  className="w-full rounded-lg px-2.5 py-1.5 text-left text-[var(--color-ink)] transition-colors duration-100 hover:bg-[var(--color-fill-selected)]"
+                >
+                  Rename
+                </button>
+              </li>
+              <li role="none">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    const { context } = chipMenu;
+                    setChipMenu(null);
+                    run(() => removeArea(context));
+                  }}
+                  className="w-full rounded-lg px-2.5 py-1.5 text-left text-[var(--color-ink)] transition-colors duration-100 hover:bg-[var(--color-fill-selected)]"
+                >
+                  Remove
+                </button>
+              </li>
+            </Popover>
+          )}
+          {/* One more, where the areas are. Rename and remove are on each
+              chip's own menu (and in Settings); this is the only control that
+              needs a place of its own. */}
           {newArea === null ? (
             <button
               type="button"
@@ -760,11 +863,15 @@ function Chip({
   children,
   active,
   onClick,
+  onMenu,
   dropId,
 }: {
   children: React.ReactNode;
   active: boolean;
-  onClick: () => void;
+  /** Receives the chip element, so a menu can be placed against it. */
+  onClick: (chip: HTMLElement) => void;
+  /** Right-click, when the chip has a menu of its own. */
+  onMenu?: (chip: HTMLElement) => void;
   dropId: string;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
@@ -772,7 +879,14 @@ function Chip({
     <button
       ref={setNodeRef}
       type="button"
-      onClick={onClick}
+      onClick={(event) => onClick(event.currentTarget)}
+      onContextMenu={
+        onMenu &&
+        ((event) => {
+          event.preventDefault();
+          onMenu(event.currentTarget);
+        })
+      }
       data-over={isOver || undefined}
       className={clsx(
         "area-chip rounded-full border px-3 py-1.5 text-xs transition-[color,border-color,box-shadow] duration-150",
