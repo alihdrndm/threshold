@@ -62,7 +62,14 @@ export function TaskCard({
         // centred checkbox beside a three-line title floats in the middle of
         // nowhere. The small top margins below re-centre every control against
         // the title's first line instead.
-        "matrix-card group flex items-start gap-3 rounded-xl border px-3 py-2.5 text-sm",
+        //
+        // flex-wrap is the responsive rule, and it is one rule: the title
+        // claims at least 9rem, and when the controls no longer fit beside
+        // that they drop to a second line, right-aligned. Before this a narrow
+        // rail squeezed the title to a few dozen pixels and broke words in
+        // half - "Refin / e / Thres / hold" - which is not wrapping, it is
+        // damage.
+        "matrix-card group flex flex-wrap items-start gap-x-3 gap-y-2 rounded-xl border px-3 py-2.5 text-sm",
       )}
     >
       {/* The place, not a bullet: it changes when the card is dragged, which
@@ -118,7 +125,7 @@ export function TaskCard({
         {...(sortable ? attributes : {})}
         {...(sortable ? listeners : {})}
         className={clsx(
-          "mt-[3px] min-w-0 flex-1 leading-snug break-words",
+          "mt-[3px] min-w-36 flex-1 leading-snug break-words",
           sortable && "cursor-grab active:cursor-grabbing",
           done && "text-[var(--zone-ink-muted)] line-through",
         )}
@@ -126,11 +133,14 @@ export function TaskCard({
         {task.title}
       </span>
 
+      {/* The controls travel together: beside the title when there is room,
+          under it and pushed right when there is not. */}
+      <div className="ml-auto flex shrink-0 items-center gap-3">
       {/* Quieter and smaller than the zone headers that share its vocabulary:
           on the board the category is a place you look at, here it is a fact
           attached to someone else's answer. */}
       {place && (
-        <span className="mt-[5px] shrink-0 text-[10px] tracking-[0.14em] uppercase text-[var(--zone-ink-muted)] select-none">
+        <span className="text-[10px] tracking-[0.14em] uppercase text-[var(--zone-ink-muted)] select-none">
           {place}
         </span>
       )}
@@ -179,7 +189,7 @@ export function TaskCard({
           type="button"
           onClick={() => onDelete(task)}
           aria-label={`Delete "${task.title}"`}
-          className="mt-px grid size-6 shrink-0 place-items-center rounded-full text-[color-mix(in_srgb,var(--zone-ink-muted)_75%,transparent)] transition duration-150 hover:bg-[color-mix(in_srgb,var(--color-ink)_8%,transparent)] hover:text-[var(--color-ink)] active:scale-90"
+          className="grid size-6 shrink-0 place-items-center rounded-full text-[color-mix(in_srgb,var(--zone-ink-muted)_75%,transparent)] transition duration-150 hover:bg-[color-mix(in_srgb,var(--color-ink)_8%,transparent)] hover:text-[var(--color-ink)] active:scale-90"
         >
           <svg viewBox="0 0 12 12" className="size-3" aria-hidden>
             <path
@@ -192,6 +202,7 @@ export function TaskCard({
           </svg>
         </button>
       )}
+      </div>
     </div>
   );
 }

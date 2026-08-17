@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import clsx from "clsx";
@@ -140,6 +141,48 @@ function AxisLabel({
   );
 }
 
+/**
+ * How wide the board is, in CSS pixels, from the element itself rather than
+ * the window - the dashboard has padding and may one day have a sidebar, and
+ * the layout should answer to the space it actually has.
+ */
+function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
+  const ref = useRef<T>(null);
+  const [width, setWidth] = useState(0);
+  // Measured before the first paint, then watched: a board that rendered
+  // narrow for one frame and snapped wide would read as a glitch on every
+  // visit to the tab.
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    setWidth(node.getBoundingClientRect().width);
+    const observer = new ResizeObserver(([entry]) => {
+      setWidth(entry.contentRect.width);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+/**
+ * Three shapes for one board.
+ *
+ * Wide (≥ 64rem): the tray beside a labelled 2x2 - the full statement.
+ * Mid (≥ 40rem): the tray becomes a shelf across the top and the 2x2 keeps
+ * its axes below; a quadrant needs about 20rem to hold a card and its
+ * controls on one line, and four tracks plus a rail cannot promise that
+ * under 64rem. Narrow: one column, no axes - position no longer carries the
+ * meaning, so each zone's header and invitation carry it alone.
+ */
+type Layout = "wide" | "mid" | "narrow";
+
+function layoutFor(width: number): Layout {
+  if (width >= 1024) return "wide";
+  if (width >= 640) return "mid";
+  return "narrow";
+}
+
 export function MatrixView({
   tasks,
   onToggleDone,
@@ -162,8 +205,25 @@ export function MatrixView({
 
   const zoneTasks = (q: Quadrant) => open.filter((t) => inQuadrant(t, q));
 
+  const [board, width] = useWidth<HTMLDivElement>();
+  const layout = layoutFor(width);
+
+  const zone = (quadrant: Quadrant, className?: string) => (
+    <Zone
+      key={quadrant.id}
+      quadrant={quadrant}
+      tasks={zoneTasks(quadrant)}
+      onToggleDone={onToggleDone}
+      onFocus={onFocus}
+      onDelete={onDelete}
+      activeTaskId={activeTaskId}
+      sessionRunning={sessionRunning}
+      className={className}
+    />
+  );
+
   return (
-    <div className="flex flex-col gap-4">
+    <div ref={board} className="flex flex-col gap-4">
       {/* The axes are the restyle. A 2x2 whose position carries the meaning
           should say so on the axes, once, instead of repeating it inside every
           header — Urgent/Not urgent across the top, Important/Not important
@@ -179,48 +239,44 @@ export function MatrixView({
           roughly twelve characters before wrapping. The equal 1fr tracks keep
           the 2x2 a true 2x2 — with solid fills, rows of different heights
           read as a broken layout rather than as content. */}
-      <div className="grid grid-cols-[18rem_auto_minmax(0,1fr)_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-3">
-        <span />
-        <span />
-        <AxisLabel>Urgent</AxisLabel>
-        <AxisLabel>Not urgent</AxisLabel>
-        <Zone
-          quadrant={INBOX}
-          tasks={zoneTasks(INBOX)}
-          onToggleDone={onToggleDone}
-          onFocus={onFocus}
-          onDelete={onDelete}
-          activeTaskId={activeTaskId}
-          sessionRunning={sessionRunning}
-          className="row-span-2"
-        />
-        <AxisLabel vertical>Important</AxisLabel>
-        {QUADRANTS.slice(0, 2).map((quadrant) => (
-          <Zone
-            key={quadrant.id}
-            quadrant={quadrant}
-            tasks={zoneTasks(quadrant)}
-            onToggleDone={onToggleDone}
-            onFocus={onFocus}
-            onDelete={onDelete}
-            activeTaskId={activeTaskId}
-            sessionRunning={sessionRunning}
-          />
-        ))}
-        <AxisLabel vertical>Not important</AxisLabel>
-        {QUADRANTS.slice(2).map((quadrant) => (
-          <Zone
-            key={quadrant.id}
-            quadrant={quadrant}
-            tasks={zoneTasks(quadrant)}
-            onToggleDone={onToggleDone}
-            onFocus={onFocus}
-            onDelete={onDelete}
-            activeTaskId={activeTaskId}
-            sessionRunning={sessionRunning}
-          />
-        ))}
-      </div>
+      {layout === "wide" && (
+        <div className="grid grid-cols-[18rem_auto_minmax(0,1fr)_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-3">
+          <span />
+          <span />
+          <AxisLabel>Urgent</AxisLabel>
+          <AxisLabel>Not urgent</AxisLabel>
+          {zone(INBOX, "row-span-2")}
+          <AxisLabel vertical>Important</AxisLabel>
+          {QUADRANTS.slice(0, 2).map((q) => zone(q))}
+          <AxisLabel vertical>Not important</AxisLabel>
+          {QUADRANTS.slice(2).map((q) => zone(q))}
+        </div>
+      )}
+
+      {/* The tray as a shelf: still first, still dashed, still "not settled",
+          just above the matrix instead of beside it. The axes survive - the
+          2x2 is intact, only the rail moved. */}
+      {layout === "mid" && (
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] grid-rows-[auto_auto_minmax(0,1fr)_minmax(0,1fr)] gap-3">
+          {zone(INBOX, "col-span-3 min-h-28")}
+          <span />
+          <AxisLabel>Urgent</AxisLabel>
+          <AxisLabel>Not urgent</AxisLabel>
+          <AxisLabel vertical>Important</AxisLabel>
+          {QUADRANTS.slice(0, 2).map((q) => zone(q))}
+          <AxisLabel vertical>Not important</AxisLabel>
+          {QUADRANTS.slice(2).map((q) => zone(q))}
+        </div>
+      )}
+
+      {/* One column. There is no 2x2 to annotate, so no axes; each zone's
+          own header and invitation say what it is for. */}
+      {layout === "narrow" && (
+        <div className="flex flex-col gap-3">
+          {zone(INBOX, "min-h-28")}
+          {QUADRANTS.map((q) => zone(q))}
+        </div>
+      )}
 
       <DoneToday tasks={done} onToggleDone={onToggleDone} onDelete={onDelete} />
     </div>

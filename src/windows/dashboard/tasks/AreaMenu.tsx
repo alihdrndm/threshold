@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { Popover } from "./Popover";
 import clsx from "clsx";
 import type { Task, TaskContext } from "@/lib/tauri";
 
@@ -23,55 +24,33 @@ export const AreasContext = createContext<{
 export function AreaControl({ task }: { task: Task }) {
   const areas = useContext(AreasContext);
   const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-
-  // Close on a click anywhere else, or Escape - a menu that stays open under
-  // the next thing you click is a menu you learn to distrust.
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", away);
-    document.addEventListener("keydown", key);
-    return () => {
-      document.removeEventListener("pointerdown", away);
-      document.removeEventListener("keydown", key);
-    };
-  }, [open]);
+  const button = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
 
   if (!areas) return null;
   const current = areas.contexts.find((c) => c.id === task.contextId) ?? null;
 
   return (
-    <div ref={root} className="relative shrink-0">
+    <>
       <button
+        ref={button}
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={current ? `Area: ${current.name}. Change area` : "Set an area"}
         className={clsx(
-          "grid h-6 place-items-center rounded-full transition duration-150 active:scale-95",
+          "grid h-6 shrink-0 place-items-center rounded-full transition duration-150 active:scale-95",
           current
-            ? "mt-px px-2 text-[10px] tracking-[0.14em] uppercase text-[var(--zone-ink-muted)] hover:text-[var(--color-ink)]"
-            : "mt-px w-6 text-xs text-[color-mix(in_srgb,var(--zone-ink-muted)_75%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-ink)_8%,transparent)] hover:text-[var(--color-ink)]",
+            ? "px-2 text-[10px] tracking-[0.14em] uppercase text-[var(--zone-ink-muted)] hover:text-[var(--color-ink)]"
+            : "w-6 text-xs text-[color-mix(in_srgb,var(--zone-ink-muted)_75%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-ink)_8%,transparent)] hover:text-[var(--color-ink)]",
         )}
       >
         {current ? current.name : "#"}
       </button>
 
-      {open && (
-        // The same surface as a zone's raised card, above whatever the card
-        // sits on. Enters like every other small thing here: fast, ease-out,
-        // from very nearly its final size.
-        <ul
-          role="menu"
-          className="area-menu absolute top-full right-0 z-20 mt-1 flex min-w-36 flex-col rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-raised)] p-1 text-sm shadow-[0_12px_32px_-12px_rgb(0_0_0/0.5)]"
-        >
+      {open && button.current && (
+        <Popover anchor={button.current} role="menu" onClose={close}>
           {areas.contexts.map((context) => (
             <AreaItem
               key={context.id}
@@ -94,9 +73,9 @@ export function AreaControl({ task }: { task: Task }) {
           >
             No area
           </AreaItem>
-        </ul>
+        </Popover>
       )}
-    </div>
+    </>
   );
 }
 

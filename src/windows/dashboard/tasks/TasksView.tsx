@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -31,6 +31,7 @@ import {
   type TaskContext,
 } from "@/lib/tauri";
 import { AreasContext } from "./AreaMenu";
+import { Popover } from "./Popover";
 import { parseTitle, suggestAreas, tagAtCaret } from "./areas";
 import { DoneToday, MatrixView } from "./MatrixView";
 import { TaskCard } from "./TaskCard";
@@ -73,6 +74,7 @@ export function TasksView({
   const [caret, setCaret] = useState(0);
   const [lit, setLit] = useState(0);
   const [newArea, setNewArea] = useState<string | null>(null);
+  const closeCompletions = useCallback(() => setCaret(0), []);
 
   useEffect(
     () => () => {
@@ -416,8 +418,10 @@ export function TasksView({
 
       {/* Two fields, two verbs: the wide one adds, the narrow one finds. One
           field doing both would need a mode, and a mode needs explaining. */}
-      <div className="flex gap-3">
-        <div className="relative min-w-0 flex-1">
+      {/* Wraps below ~40rem: the search drops under the add field rather
+          than squeezing it into a slot a title cannot fit. */}
+      <div className="flex flex-wrap gap-3">
+        <div className="relative min-w-64 flex-[1_1_20rem]">
         <input
           ref={draftField}
           value={draft}
@@ -468,10 +472,13 @@ export function TasksView({
             hands: type # and the areas appear; keep typing to narrow; Enter or
             Tab to take one. Mouse picks use mousedown so the field keeps
             focus and the caret survives. */}
-        {showPopover && tag && (
-          <ul
+        {showPopover && tag && draftField.current && (
+          <Popover
+            anchor={draftField.current}
+            align="start"
             role="listbox"
-            className="area-menu absolute top-full left-5 z-20 mt-1 flex min-w-40 flex-col rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-raised)] p-1 text-sm shadow-[0_12px_32px_-12px_rgb(0_0_0/0.5)]"
+            onClose={closeCompletions}
+            className="min-w-40"
           >
             {suggestions.map((context, index) => (
               <li
@@ -507,7 +514,7 @@ export function TasksView({
                 New area “{tag.query}”
               </li>
             )}
-          </ul>
+          </Popover>
         )}
         </div>
         <input
@@ -518,7 +525,7 @@ export function TasksView({
           }}
           placeholder="Search"
           aria-label="Search all tasks"
-          className="ritual-field w-56 shrink-0 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-5 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+          className="ritual-field min-w-40 flex-[0_1_14rem] rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-5 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
         />
       </div>
 
