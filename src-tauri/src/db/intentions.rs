@@ -86,6 +86,20 @@ pub fn insert(conn: &Connection, intention: &NewIntention) -> Result<i64, String
     Ok(conn.last_insert_rowid())
 }
 
+/// What one intention said, if it said anything. `None` for a missing row or
+/// a blank text - both mean "nothing to name".
+pub fn text_of(conn: &Connection, id: i64) -> Option<String> {
+    conn.query_row(
+        "SELECT text FROM intentions WHERE id = ?1",
+        [id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+    .map(|text| text.trim().to_owned())
+    .filter(|text| !text.is_empty())
+}
+
 pub fn recent(conn: &Connection, limit: i64) -> Result<Vec<IntentionRow>, String> {
     let mut stmt = conn
         .prepare(
@@ -157,6 +171,18 @@ mod tests {
             outcome,
             task_id: None,
         }
+    }
+
+    #[test]
+    fn an_intention_can_be_asked_what_it_was_for() {
+        let conn = memory_db();
+        let id = insert(&conn, &sample(Outcome::Completed, "  write the report ")).unwrap();
+        assert_eq!(text_of(&conn, id), Some("write the report".to_string()));
+        let mut blank = sample(Outcome::Completed, "   ");
+        blank.text = Some("   ".into());
+        let blank_id = insert(&conn, &blank).unwrap();
+        assert_eq!(text_of(&conn, blank_id), None, "blank is nothing, not an empty name");
+        assert_eq!(text_of(&conn, 9999), None);
     }
 
     #[test]

@@ -70,6 +70,10 @@ pub fn finish_ritual(
         // deleted while the ritual was open - would fail the insert. Losing the
         // whole record over a link is the wrong trade: the intention is what
         // matters, the link is an extra.
+        // The subject the banner and the check-in will name. A task's title
+        // when there is a task; otherwise what was typed - a session started
+        // from an intention was still started for something, and a check-in
+        // that says only "90 minutes." has forgotten what it was asking about.
         let task_title = match intention.task_id {
             Some(task_id) => match tasks::title_of(&conn, task_id) {
                 Ok(title) => Some(title),
@@ -79,7 +83,15 @@ pub fn finish_ritual(
                 }
             },
             None => None,
-        };
+        }
+        .or_else(|| {
+            intention
+                .text
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        });
 
         // One transaction: a session without its intention is unrecoverable,
         // and the two are written together or not at all.
@@ -452,7 +464,10 @@ pub fn session_status(db: State<'_, Db>) -> Result<SessionStatus, String> {
         .map(|row| ActiveSession {
             id: row.id,
             task_id: row.task_id,
-            subject: row.task_title.clone(),
+            subject: row
+                .task_title
+                .clone()
+                .or_else(|| intentions::text_of(&conn, row.intention_id)),
             started_ts: row.started_ts,
             ends_ts: row.ends_ts,
             duration_min: row.duration_min,
@@ -571,11 +586,18 @@ pub fn pending_checkin(db: State<'_, Db>) -> Result<Option<PendingCheckin>, Stri
         None => false,
     };
 
+    // Sessions recorded before the subject was carried over have none stored;
+    // their intention still knows what they were for.
+    let subject = row
+        .task_title
+        .clone()
+        .or_else(|| intentions::text_of(&conn, row.intention_id));
+
     Ok(Some(PendingCheckin {
         session_id: row.id,
         task_id: row.task_id,
         can_mark_done,
-        subject: row.task_title,
+        subject,
         predicted_yes: row.predicted_yes,
         minutes: ((ended - row.started_ts).max(0) + 30) / 60,
         late_by: (now - ended).max(0),
