@@ -2,6 +2,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import clsx from "clsx";
 import type { Task } from "@/lib/tauri";
+import { AreaControl } from "./AreaMenu";
 
 /**
  * A draggable task.
@@ -133,6 +134,10 @@ export function TaskCard({
           {place}
         </span>
       )}
+
+      {/* The one home this task has, or the way to give it one. Before Focus:
+          where a thing belongs is read before what to do with it. */}
+      {!done && <AreaControl task={task} />}
 
       {/* Always visible rather than revealed on hover: a control you cannot see
           is a control most people never find. */}

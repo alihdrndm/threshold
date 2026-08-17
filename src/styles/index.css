@@ -431,6 +431,34 @@ textarea {
   animation: banner-in 200ms var(--ease-out) both;
 }
 
+/* A card held over an area chip: the zone's own drag ring at chip scale, so
+   "drop here" is one signal across the page. */
+.area-chip[data-over] {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+/* Small menus - the area picker on a card, the #area completions under the
+   input. From nearly their final size, never from nothing, and anchored to
+   the control that opened them rather than to their own centre. */
+.area-menu {
+  transform-origin: top right;
+  animation: area-menu-in 160ms var(--ease-out) both;
+}
+[role="listbox"].area-menu {
+  transform-origin: top left;
+}
+@keyframes area-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* The asymmetry is deliberate. Dark builds surfaces by adding light, so a card
    greyer than its zone would read as a hole and must be *of* it. Light builds
    them by removing tint, so white paper on a tinted board is the canonical

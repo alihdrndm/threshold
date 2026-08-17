@@ -5,6 +5,7 @@ import {
   KeyboardSensor,
   PointerSensor,
   closestCorners,
+  useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -17,16 +18,20 @@ import {
 } from "@dnd-kit/sortable";
 import clsx from "clsx";
 import {
+  addContext,
   addTask,
   focusOnTask,
   listContexts,
   listTasks,
   moveTask,
   reorderTasks,
+  setTaskContext,
   setTaskStatus,
   type Task,
   type TaskContext,
 } from "@/lib/tauri";
+import { AreasContext } from "./AreaMenu";
+import { parseTitle, suggestAreas, tagAtCaret } from "./areas";
 import { DoneToday, MatrixView } from "./MatrixView";
 import { TaskCard } from "./TaskCard";
 import {
@@ -56,10 +61,18 @@ export function TasksView({
   const [search, setSearch] = useState("");
   const [dragging, setDragging] = useState<Task | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ text: string; undo: () => void } | null>(
-    null,
-  );
+  // One quiet line for things that went right, with at most one thing to
+  // press: Undo after a delete, Create after an unknown #area.
+  const [notice, setNotice] = useState<{
+    text: string;
+    action: { label: string; run: () => void };
+  } | null>(null);
   const noticeTimer = useRef<number | null>(null);
+  const draftField = useRef<HTMLInputElement>(null);
+  // The `#area` autocomplete: where the caret is, and which suggestion is lit.
+  const [caret, setCaret] = useState(0);
+  const [lit, setLit] = useState(0);
+  const [newArea, setNewArea] = useState<string | null>(null);
 
   useEffect(
     () => () => {
@@ -127,11 +140,65 @@ export function TasksView({
     );
   }
 
+  function say(text: string, action: { label: string; run: () => void }) {
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    setNotice({ text, action });
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
+  }
+
+  /// A `#area` in the title wins over the selected chip: the tag was typed
+  /// for this task, the chip was chosen for the view. A tag naming no area
+  /// files the task without one and offers to create the area - a name that
+  /// vanished on Enter would be a name you thought was saved.
   async function submitDraft() {
-    const title = draft.trim();
-    if (!title) return;
+    const parsed = parseTitle(draft, contexts);
+    if (!parsed.title) return;
     setDraft("");
-    await addTask(title, contextFilter);
+    const id = await addTask(parsed.title, parsed.context?.id ?? contextFilter);
+    await refresh();
+    if (parsed.unknown) {
+      const name = parsed.unknown;
+      say(`No area called “${name}” yet`, {
+        label: `Create ${name}`,
+        run: () =>
+          run(async () => {
+            setNotice(null);
+            const made = await makeArea(name);
+            if (made) await setTaskContext(id, made.id);
+            await refresh();
+          }),
+      });
+    }
+  }
+
+  /// Create an area and hand back the row as stored - the name may have been
+  /// tidied - or null if it could not be found in what came back.
+  async function makeArea(name: string): Promise<TaskContext | null> {
+    const next = await addContext(name);
+    setContexts(next);
+    return (
+      next.find((c) => c.name.toLowerCase() === name.trim().toLowerCase()) ?? null
+    );
+  }
+
+  /// The chosen suggestion replaces the half-typed tag; the caret lands after
+  /// it, ready for the rest of the title.
+  function completeTag(name: string) {
+    const tag = tagAtCaret(draft, caret);
+    if (!tag) return;
+    const next = `${draft.slice(0, tag.start)}#${name} ${draft.slice(caret).trimStart()}`;
+    setDraft(next);
+    const at = tag.start + name.length + 2;
+    setCaret(at);
+    requestAnimationFrame(() => draftField.current?.setSelectionRange(at, at));
+  }
+
+  async function setArea(task: Task, contextId: number | null) {
+    if (task.contextId === contextId) return;
+    setTasks((current) =>
+      current.map((t) => (t.id === task.id ? { ...t, contextId } : t)),
+    );
+    await setTaskContext(task.id, contextId);
     await refresh();
   }
 
@@ -144,17 +211,15 @@ export function TasksView({
     setTasks((current) => current.filter((t) => t.id !== task.id));
     await setTaskStatus(task.id, "deleted");
     const before = task.status;
-    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
-    setNotice({
-      text: `Deleted “${task.title}”`,
-      undo: () =>
+    say(`Deleted “${task.title}”`, {
+      label: "Undo",
+      run: () =>
         run(async () => {
           setNotice(null);
           await setTaskStatus(task.id, before);
           await refresh();
         }),
     });
-    noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
   }
 
   async function toggleDone(task: Task) {
@@ -191,9 +256,19 @@ export function TasksView({
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
+    const overId = String(over.id);
+
+    // Dropped on an area chip: the task changes home, not place. The chips
+    // are the areas, so the board's drag vocabulary reaches them for free.
+    if (overId.startsWith("area:")) {
+      const raw = overId.slice("area:".length);
+      const dropped = tasks.find((t) => t.id === active.id);
+      if (dropped) await setArea(dropped, raw === "none" ? null : Number(raw));
+      return;
+    }
+
     // Dropping onto a zone gives the quadrant id; dropping onto another card
     // means "the quadrant that card is in".
-    const overId = String(over.id);
     const target = tasks.find((t) => String(t.id) === overId);
     const quadrantId = (target ? quadrantOf(target) : overId) as QuadrantId;
 
@@ -238,12 +313,56 @@ export function TasksView({
     await refresh();
   }
 
+  const filterName = contexts.find((c) => c.id === contextFilter)?.name;
+  const tag = tagAtCaret(draft, caret);
+  const suggestions = tag ? suggestAreas(tag.query, contexts) : [];
+  // What the popover offers: matching areas, or - when nothing matches and
+  // something was typed - one item that makes the area on the spot.
+  const canMake =
+    tag !== null &&
+    tag.query.length > 0 &&
+    !contexts.some((c) => c.name.toLowerCase() === tag.query.toLowerCase());
+  const options = suggestions.length + (canMake ? 1 : 0);
+  const showPopover = tag !== null && options > 0;
+
+  /// Accept whatever the popover has lit: an area, or the offer to make one.
+  function acceptLit(index = lit) {
+    const pick = suggestions[index];
+    if (pick) {
+      completeTag(pick.name);
+      return;
+    }
+    if (canMake && tag) {
+      const query = tag.query;
+      run(async () => {
+        const made = await makeArea(query);
+        if (made) completeTag(made.name);
+      });
+    }
+  }
+
   return (
+    <AreasContext.Provider
+      value={{ contexts, setArea: (t, id) => run(() => setArea(t, id)) }}
+    >
     <div className="flex h-full flex-col gap-5 p-8">
+      {/* The drag layer wraps the chips as well as the board: they take
+          cards now. */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragStart={onDragStart}
+        onDragCancel={() => setDragging(null)}
+        onDragEnd={onDragEnd}
+      >
       <header className="flex flex-wrap items-center gap-3">
         <Segmented value={view} onChange={setView} />
-        <div className="ml-auto flex flex-wrap gap-2">
+        {/* The areas. Each chip filters when clicked and takes a card when
+            one is dropped on it: the same word - Job - is both the lens and
+            the label, so there is one thing to learn. */}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <Chip
+            dropId="area:none"
             active={contextFilter === null}
             onClick={() => setContextFilter(null)}
           >
@@ -252,27 +371,145 @@ export function TasksView({
           {contexts.map((context) => (
             <Chip
               key={context.id}
+              dropId={`area:${context.id}`}
               active={contextFilter === context.id}
               onClick={() => setContextFilter(context.id)}
             >
               {context.name}
             </Chip>
           ))}
+          {/* One more, where the areas are. Rename and remove live in
+              Settings: here you are looking at tasks, not administering
+              labels, and the one gesture that belongs here is "another". */}
+          {newArea === null ? (
+            <button
+              type="button"
+              onClick={() => setNewArea("")}
+              aria-label="New area"
+              className="ritual-pressable grid size-7 place-items-center rounded-full border border-[var(--color-border-subtle)] text-sm text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]"
+            >
+              +
+            </button>
+          ) : (
+            <input
+              autoFocus
+              value={newArea}
+              onChange={(event) => setNewArea(event.target.value)}
+              onBlur={() => {
+                if (!newArea.trim()) setNewArea(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && newArea.trim())
+                  run(async () => {
+                    await makeArea(newArea);
+                    setNewArea(null);
+                  });
+                if (event.key === "Escape") setNewArea(null);
+              }}
+              placeholder="New area"
+              aria-label="New area name"
+              className="ritual-field w-32 rounded-full border border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)] bg-[var(--color-fill-subtle)] px-3 py-1.5 text-xs text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)]"
+            />
+          )}
         </div>
       </header>
 
       {/* Two fields, two verbs: the wide one adds, the narrow one finds. One
           field doing both would need a mode, and a mode needs explaining. */}
       <div className="flex gap-3">
+        <div className="relative min-w-0 flex-1">
         <input
+          ref={draftField}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setCaret(event.target.selectionStart ?? event.target.value.length);
+            setLit(0);
+          }}
+          onSelect={(event) =>
+            setCaret(event.currentTarget.selectionStart ?? draft.length)
+          }
           onKeyDown={(event) => {
+            // With the popover up, the arrows, Enter and Tab belong to it and
+            // Escape hands them back. Without it, Enter adds the task.
+            if (showPopover) {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setLit((i) => (i + 1) % options);
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setLit((i) => (i - 1 + options) % options);
+                return;
+              }
+              if (event.key === "Enter" || event.key === "Tab") {
+                event.preventDefault();
+                acceptLit();
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setCaret(0);
+                return;
+              }
+            }
             if (event.key === "Enter") run(() => submitDraft());
           }}
-          placeholder="Add a task"
-          className="ritual-field min-w-0 flex-1 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-5 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+          // The selected chip is the default home, and the field says so: an
+          // inherited area you were not told about is a surprise later.
+          placeholder={filterName ? `Add a task to ${filterName}` : "Add a task"}
+          aria-label="Add a task. Type # to choose an area."
+          aria-expanded={showPopover}
+          aria-autocomplete="list"
+          className="ritual-field w-full rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-5 py-3 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
         />
+        {/* Todoist's convention, which is the one people already have in their
+            hands: type # and the areas appear; keep typing to narrow; Enter or
+            Tab to take one. Mouse picks use mousedown so the field keeps
+            focus and the caret survives. */}
+        {showPopover && tag && (
+          <ul
+            role="listbox"
+            className="area-menu absolute top-full left-5 z-20 mt-1 flex min-w-40 flex-col rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-raised)] p-1 text-sm shadow-[0_12px_32px_-12px_rgb(0_0_0/0.5)]"
+          >
+            {suggestions.map((context, index) => (
+              <li
+                key={context.id}
+                role="option"
+                aria-selected={index === lit}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  completeTag(context.name);
+                }}
+                className={clsx(
+                  "cursor-pointer rounded-lg px-2.5 py-1.5 text-[var(--color-ink)]",
+                  index === lit && "bg-[var(--color-fill-selected)]",
+                )}
+              >
+                <span className="text-[var(--color-ink-muted)]">#</span>
+                {context.name}
+              </li>
+            ))}
+            {canMake && (
+              <li
+                role="option"
+                aria-selected={lit === suggestions.length}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  acceptLit(suggestions.length);
+                }}
+                className={clsx(
+                  "cursor-pointer rounded-lg px-2.5 py-1.5 text-[var(--color-ink-muted)]",
+                  lit === suggestions.length && "bg-[var(--color-fill-selected)]",
+                )}
+              >
+                New area “{tag.query}”
+              </li>
+            )}
+          </ul>
+        )}
+        </div>
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
@@ -301,21 +538,14 @@ export function TasksView({
           </span>
           <button
             type="button"
-            onClick={notice.undo}
+            onClick={notice.action.run}
             className="ritual-pressable shrink-0 rounded-full border border-[color-mix(in_srgb,var(--color-ink)_16%,transparent)] px-2.5 py-1 text-xs text-[var(--color-ink)]"
           >
-            Undo
+            {notice.action.label}
           </button>
         </div>
       )}
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCorners}
-        onDragStart={onDragStart}
-        onDragCancel={() => setDragging(null)}
-        onDragEnd={onDragEnd}
-      >
         <div className="min-h-0 flex-1 overflow-auto">
           {query !== "" ? (
             <SearchResults
@@ -358,6 +588,7 @@ export function TasksView({
         </DragOverlay>
       </DndContext>
     </div>
+    </AreasContext.Provider>
   );
 }
 
@@ -443,7 +674,7 @@ function ListView({
     })),
     {
       key: "none",
-      name: "No context",
+      name: "No area",
       items: open.filter((t) => t.contextId === null),
     },
   ].filter((group) => group.items.length > 0);
@@ -512,21 +743,32 @@ function Segmented({
   );
 }
 
+/**
+ * A filter that is also a drop target. `dropId` registers it with the drag
+ * layer; a card dropped here changes its area. The ring while a card hovers
+ * is the zone's own accent ring at chip scale, so "you can drop this here"
+ * reads the same everywhere on the page.
+ */
 function Chip({
   children,
   active,
   onClick,
+  dropId,
 }: {
   children: React.ReactNode;
   active: boolean;
   onClick: () => void;
+  dropId: string;
 }) {
+  const { setNodeRef, isOver } = useDroppable({ id: dropId });
   return (
     <button
+      ref={setNodeRef}
       type="button"
       onClick={onClick}
+      data-over={isOver || undefined}
       className={clsx(
-        "rounded-full border px-3 py-1.5 text-xs transition-colors duration-150",
+        "area-chip rounded-full border px-3 py-1.5 text-xs transition-[color,border-color,box-shadow] duration-150",
         active
           ? "border-[var(--color-accent)] text-[var(--color-ink)]"
           : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",

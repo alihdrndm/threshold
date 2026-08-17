@@ -1,24 +1,29 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 import {
+  addContext,
   addQuote,
   chooseQuote,
   clearHistory,
   emergencyUnblock,
   getDiagnostics,
   getSettings,
+  listContexts,
   listQuotes,
   pauseFor,
   pauseStatus,
   rememberedSites,
   rememberSites,
+  removeContext,
   removeQuote,
+  renameContext,
   repairHelper,
   resumeNow,
   setSetting,
   type Diagnostics,
   type Quote,
   type QuoteSurface,
+  type TaskContext,
 } from "@/lib/tauri";
 import { useSiteEditor } from "@/sites/useSiteEditor";
 import { CATEGORIES } from "../popup/ritual/copy";
@@ -175,6 +180,13 @@ export function SettingsView({
             await refresh();
           }}
         />
+      </Section>
+
+      <Section
+        title="Areas"
+        note="The one home a task has — Job, Personal, Side, or whatever your life is actually divided into. Type #name when adding a task, or drop a card on an area on the Tasks tab. Removing an area leaves its tasks where they are, unlabelled. Eight at most: past that they stop being areas and start being tags."
+      >
+        <AreaList />
       </Section>
 
       <Section
@@ -428,6 +440,105 @@ export function SettingsView({
  * is a settings row among settings rows, and borrowing the ritual's composure
  * here would make a list you edit look like a decision you are making.
  */
+/**
+ * The areas, editable in place. Click a name to rename it; Enter keeps,
+ * Escape forgets. The × removes the area and only the area - its tasks stay,
+ * unlabelled - which is why there is no "are you sure" here either.
+ */
+function AreaList() {
+  const [areas, setAreas] = useState<TaskContext[]>([]);
+  const [editing, setEditing] = useState<{ id: number; name: string } | null>(
+    null,
+  );
+  const [adding, setAdding] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+
+  useEffect(() => {
+    listContexts()
+      .then(setAreas)
+      .catch(() => setAreas([]));
+  }, []);
+
+  function attempt(action: () => Promise<TaskContext[]>) {
+    setProblem(null);
+    action()
+      .then(setAreas)
+      .catch((err: unknown) =>
+        setProblem(err instanceof Error ? err.message : String(err)),
+      );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <ul className="flex flex-wrap gap-2">
+        {areas.map((area) => (
+          <li
+            key={area.id}
+            className="flex items-center gap-1 rounded-full border border-[var(--color-border-subtle)] pr-1 pl-3 text-sm"
+          >
+            {editing?.id === area.id ? (
+              <input
+                autoFocus
+                value={editing.name}
+                onChange={(event) =>
+                  setEditing({ id: area.id, name: event.target.value })
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    const name = editing.name;
+                    setEditing(null);
+                    attempt(() => renameContext(area.id, name));
+                  }
+                  if (event.key === "Escape") setEditing(null);
+                }}
+                onBlur={() => setEditing(null)}
+                aria-label={`Rename ${area.name}`}
+                className="w-28 bg-transparent py-1.5 text-sm text-[var(--color-ink)] outline-none"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditing({ id: area.id, name: area.name })}
+                title="Rename"
+                className="py-1.5 text-[var(--color-ink)]"
+              >
+                {area.name}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => attempt(() => removeContext(area.id))}
+              aria-label={`Remove ${area.name}`}
+              className="grid size-6 place-items-center rounded-full text-[var(--color-ink-muted)] transition duration-150 hover:bg-[var(--color-fill-selected)] hover:text-[var(--color-ink)] active:scale-90"
+            >
+              ×
+            </button>
+          </li>
+        ))}
+        <li>
+          <input
+            value={adding}
+            onChange={(event) => setAdding(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && adding.trim()) {
+                const name = adding;
+                setAdding("");
+                attempt(() => addContext(name));
+              }
+            }}
+            placeholder="New area"
+            aria-label="New area"
+            className="ritual-field w-36 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-3 py-1.5 text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-ink-muted)] focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+          />
+        </li>
+      </ul>
+      {problem && (
+        <p className="text-xs text-[var(--color-ink-muted)]">{problem}</p>
+      )}
+    </div>
+  );
+}
+
 function SiteList({
   sites,
   onChange,

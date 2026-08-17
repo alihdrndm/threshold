@@ -82,6 +82,102 @@ pub fn contexts(conn: &Connection) -> Result<Vec<Context>, String> {
         .map_err(|err| format!("could not read contexts: {err}"))
 }
 
+/// The most areas a person can hold in their head as *areas*. Past this they
+/// are tags, and tags are the feature this list refuses to grow (see the module
+/// note). A nudge enforced here so no caller can quietly bypass it.
+pub const MAX_CONTEXTS: usize = 8;
+
+fn tidy_context_name(name: &str) -> Result<String, String> {
+    // The '#' is quick-add syntax, not part of the name.
+    let name = name
+        .trim()
+        .trim_start_matches('#')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if name.is_empty() {
+        return Err("an area needs a name".into());
+    }
+    if name.chars().count() > 24 {
+        return Err("an area's name is at most 24 characters".into());
+    }
+    Ok(name)
+}
+
+/// Add an area, joining the end of the row. Names are unique, case-insensitively:
+/// two areas that differ only in case would be one area with a typo.
+pub fn add_context(conn: &Connection, name: &str) -> Result<i64, String> {
+    let name = tidy_context_name(name)?;
+    let existing = contexts(conn)?;
+    if existing.len() >= MAX_CONTEXTS {
+        return Err(format!(
+            "{MAX_CONTEXTS} areas is the most this list will hold - past that they stop being areas"
+        ));
+    }
+    if let Some(taken) = existing.iter().find(|c| c.name.eq_ignore_ascii_case(&name)) {
+        return Err(format!("there is already an area called {}", taken.name));
+    }
+    conn.execute(
+        "INSERT INTO contexts(name, sort_order)
+         VALUES(?1, (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM contexts))",
+        [&name],
+    )
+    .map_err(|err| format!("could not add the area: {err}"))?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn rename_context(conn: &Connection, id: i64, name: &str) -> Result<(), String> {
+    let name = tidy_context_name(name)?;
+    if let Some(taken) = contexts(conn)?
+        .iter()
+        .find(|c| c.id != id && c.name.eq_ignore_ascii_case(&name))
+    {
+        return Err(format!("there is already an area called {}", taken.name));
+    }
+    let changed = conn
+        .execute(
+            "UPDATE contexts SET name = ?1 WHERE id = ?2",
+            rusqlite::params![name, id],
+        )
+        .map_err(|err| format!("could not rename the area: {err}"))?;
+    if changed == 0 {
+        return Err(format!("no area with id {id}"));
+    }
+    Ok(())
+}
+
+/// Remove an area. Its tasks lose the area and keep everything else - deleting
+/// a label must never delete the things it labelled.
+pub fn remove_context(conn: &Connection, id: i64) -> Result<(), String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("could not remove the area: {err}"))?;
+    tx.execute("UPDATE tasks SET context_id = NULL WHERE context_id = ?1", [id])
+        .map_err(|err| format!("could not remove the area: {err}"))?;
+    let changed = tx
+        .execute("DELETE FROM contexts WHERE id = ?1", [id])
+        .map_err(|err| format!("could not remove the area: {err}"))?;
+    if changed == 0 {
+        return Err(format!("no area with id {id}"));
+    }
+    tx.commit()
+        .map_err(|err| format!("could not remove the area: {err}"))
+}
+
+/// Give a task an area, or `None` to take it away.
+pub fn set_context(conn: &Connection, id: i64, context_id: Option<i64>) -> Result<(), String> {
+    let changed = conn
+        .execute(
+            "UPDATE tasks SET context_id = ?1 WHERE id = ?2",
+            rusqlite::params![context_id, id],
+        )
+        .map_err(|err| format!("could not move the task: {err}"))?;
+    if changed == 0 {
+        return Err(format!("no task with id {id}"));
+    }
+    Ok(())
+}
+
 /// Everything still on the plate. Done and archived tasks stay in the database
 /// but out of the way.
 pub fn open_tasks(conn: &Connection) -> Result<Vec<Task>, String> {
@@ -280,6 +376,38 @@ mod tests {
         assert!(names.contains(&"Job".to_string()));
         assert!(names.contains(&"Personal".to_string()));
         assert!(names.contains(&"Side".to_string()));
+    }
+
+    #[test]
+    fn areas_can_be_added_renamed_and_removed_without_losing_tasks() {
+        let conn = memory_db();
+        let health = add_context(&conn, "  #Health  ").unwrap();
+        assert!(contexts(&conn).unwrap().iter().any(|c| c.name == "Health"));
+
+        let id = add(&conn, &new("run")).unwrap();
+        set_context(&conn, id, Some(health)).unwrap();
+        assert_eq!(open_tasks(&conn).unwrap()[0].context_id, Some(health));
+
+        rename_context(&conn, health, "Body").unwrap();
+        assert!(contexts(&conn).unwrap().iter().any(|c| c.name == "Body"));
+
+        remove_context(&conn, health).unwrap();
+        let task = &open_tasks(&conn).unwrap()[0];
+        assert_eq!(task.context_id, None, "the task survives, unlabelled");
+        assert_eq!(task.title, "run");
+    }
+
+    #[test]
+    fn area_names_are_unique_regardless_of_case_and_capped() {
+        let conn = memory_db();
+        assert!(add_context(&conn, "job").is_err(), "Job already exists");
+        assert!(add_context(&conn, "   ").is_err());
+        assert!(add_context(&conn, " # ").is_err(), "a bare hash is not a name");
+        for i in 0..5 {
+            add_context(&conn, &format!("area {i}")).unwrap();
+        }
+        assert_eq!(contexts(&conn).unwrap().len(), MAX_CONTEXTS);
+        assert!(add_context(&conn, "one too many").is_err());
     }
 
     #[test]

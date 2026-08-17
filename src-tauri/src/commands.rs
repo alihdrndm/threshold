@@ -218,6 +218,42 @@ pub fn list_contexts(db: State<'_, Db>) -> Result<Vec<tasks::Context>, String> {
     tasks::contexts(&conn)
 }
 
+/// The areas, as stored, after a change - so the toolbar never guesses.
+#[tauri::command]
+pub fn add_context(db: State<'_, Db>, name: String) -> Result<Vec<tasks::Context>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    tasks::add_context(&conn, &name)?;
+    tasks::contexts(&conn)
+}
+
+#[tauri::command]
+pub fn rename_context(
+    db: State<'_, Db>,
+    id: i64,
+    name: String,
+) -> Result<Vec<tasks::Context>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    tasks::rename_context(&conn, id, &name)?;
+    tasks::contexts(&conn)
+}
+
+#[tauri::command]
+pub fn remove_context(db: State<'_, Db>, id: i64) -> Result<Vec<tasks::Context>, String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    tasks::remove_context(&conn, id)?;
+    tasks::contexts(&conn)
+}
+
+#[tauri::command]
+pub fn set_task_context(
+    db: State<'_, Db>,
+    id: i64,
+    context_id: Option<i64>,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    tasks::set_context(&conn, id, context_id)
+}
+
 #[tauri::command]
 pub fn list_tasks(db: State<'_, Db>) -> Result<Vec<tasks::Task>, String> {
     let conn = db.0.lock().map_err(|_| "database lock poisoned")?;

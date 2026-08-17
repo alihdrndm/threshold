@@ -223,6 +223,29 @@ export function listContexts(): Promise<TaskContext[]> {
   return invoke<TaskContext[]>("list_contexts");
 }
 
+/**
+ * Areas - the one home a task has (Job, Personal, Side, yours). Each call
+ * returns the whole list as stored, so the toolbar shows what is actually kept
+ * rather than what was sent. Removing an area leaves its tasks unlabelled,
+ * never deleted.
+ */
+export function addContext(name: string): Promise<TaskContext[]> {
+  return invoke<TaskContext[]>("add_context", { name });
+}
+
+export function renameContext(id: number, name: string): Promise<TaskContext[]> {
+  return invoke<TaskContext[]>("rename_context", { id, name });
+}
+
+export function removeContext(id: number): Promise<TaskContext[]> {
+  return invoke<TaskContext[]>("remove_context", { id });
+}
+
+/** Give a task an area, or null to clear it. */
+export function setTaskContext(id: number, contextId: number | null): Promise<void> {
+  return invoke<void>("set_task_context", { id, contextId });
+}
+
 export function listTasks(): Promise<Task[]> {
   return invoke<Task[]>("list_tasks");
 }
