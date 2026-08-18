@@ -31,27 +31,54 @@ pub enum SystemEvent {
 }
 
 pub fn init(app: AppHandle) {
-    // Honour the configured lock threshold. It was persisted by the settings
-    // panel and then never read, so changing it silently did nothing.
-    let threshold = read_lock_threshold(&app);
+    // Honour the configured thresholds. They were persisted by the settings
+    // panel and then never read, so changing them silently did nothing.
+    let (lock_threshold, min_gap) = read_thresholds(&app);
     *STATE.lock().expect("trigger state poisoned") =
-        Some(TriggerState::with_lock_threshold(threshold));
+        Some(TriggerState::with_thresholds(lock_threshold, min_gap));
     message_window::spawn(app);
 }
 
-fn read_lock_threshold(app: &AppHandle) -> std::time::Duration {
+/// Re-read the thresholds after Settings changed them, keeping everything the
+/// debounce already remembers. Called by the settings command, so a change
+/// takes effect on the very next trigger rather than after a restart.
+pub fn reload_thresholds(app: &AppHandle) {
+    let (lock_threshold, min_gap) = read_thresholds(app);
+    with_state(|state| state.set_thresholds(lock_threshold, min_gap));
+}
+
+/// The two thresholds, in seconds, from settings.
+///
+/// Stored in seconds under `_sec` keys. The older `_min` keys are read as a
+/// fallback and converted, so a value someone set last month still means
+/// what it meant. Zero is allowed and means "always": no gap, or any lock
+/// counts as leaving.
+fn read_thresholds(app: &AppHandle) -> (std::time::Duration, std::time::Duration) {
     use tauri::Manager;
-    let minutes = app
-        .try_state::<crate::db::Db>()
-        .and_then(|db| {
-            db.0.lock().ok().and_then(|conn| {
-                crate::db::get_setting(&conn, "unlock_threshold_min")
-                    .and_then(|raw| raw.parse::<u64>().ok())
+    let read = |sec_key: &str, min_key: &str, default: std::time::Duration| {
+        app.try_state::<crate::db::Db>()
+            .and_then(|db| {
+                db.0.lock().ok().and_then(|conn| {
+                    crate::db::get_setting(&conn, sec_key)
+                        .and_then(|raw| raw.trim().parse::<u64>().ok())
+                        .or_else(|| {
+                            crate::db::get_setting(&conn, min_key)
+                                .and_then(|raw| raw.trim().parse::<u64>().ok())
+                                .map(|minutes| minutes * 60)
+                        })
+                })
             })
-        })
-        .filter(|minutes| *minutes > 0)
-        .unwrap_or(20);
-    std::time::Duration::from_secs(minutes * 60)
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(default)
+    };
+    (
+        read(
+            "unlock_threshold_sec",
+            "unlock_threshold_min",
+            debounce::DEFAULT_LOCK_THRESHOLD,
+        ),
+        read("min_gap_sec", "min_gap_min", debounce::DEFAULT_MIN_GAP),
+    )
 }
 
 fn handle_system_event(app: &AppHandle, event: SystemEvent) {
@@ -140,10 +167,12 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
         }
         // Each of these is correct behaviour, and each one previously looked
         // exactly like the app being broken.
-        Decision::TooSoon => crate::log::line(&format!(
-            "{kind:?}: suppressed, a ritual was shown less than {} minutes ago",
-            debounce::MIN_GAP.as_secs() / 60
-        )),
+        Decision::TooSoon => {
+            let gap = with_state(|state| state.min_gap().as_secs()).unwrap_or(0);
+            crate::log::line(&format!(
+                "{kind:?}: suppressed, a ritual was shown less than {gap} seconds ago (see Settings)"
+            ));
+        }
         Decision::NotAwayLongEnough => crate::log::line(&format!(
             "{kind:?}: suppressed, the screen was not locked long enough to count as returning \
              (see Settings)"

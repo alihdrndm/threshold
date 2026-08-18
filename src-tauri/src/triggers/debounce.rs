@@ -9,11 +9,14 @@
 
 use std::time::{Duration, Instant};
 
-/// Never show the ritual twice inside this window, whatever fires.
-pub const MIN_GAP: Duration = Duration::from_secs(15 * 60);
+/// Never show the ritual twice inside this window, whatever fires. The
+/// default; Settings can bring it down to seconds for people who want every
+/// return met, or up for people who do not.
+pub const DEFAULT_MIN_GAP: Duration = Duration::from_secs(15 * 60);
 
 /// An unlock only counts as a "return to the computer" if you were actually
-/// away. Stepping out for a coffee is not the same as sitting back down.
+/// away. Stepping out for a coffee is not the same as sitting back down. The
+/// default; yours to change.
 pub const DEFAULT_LOCK_THRESHOLD: Duration = Duration::from_secs(20 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +80,7 @@ pub struct TriggerState {
     locked_at: Option<Instant>,
     session: Option<Session>,
     lock_threshold: Duration,
+    min_gap: Duration,
 }
 
 impl Default for TriggerState {
@@ -87,16 +91,30 @@ impl Default for TriggerState {
             locked_at: None,
             session: None,
             lock_threshold: DEFAULT_LOCK_THRESHOLD,
+            min_gap: DEFAULT_MIN_GAP,
         }
     }
 }
 
 impl TriggerState {
-    pub fn with_lock_threshold(lock_threshold: Duration) -> Self {
+    pub fn with_thresholds(lock_threshold: Duration, min_gap: Duration) -> Self {
         Self {
             lock_threshold,
+            min_gap,
             ..Self::default()
         }
+    }
+
+    /// Take new thresholds without losing what has already happened - the
+    /// last prompt, the lock in progress, the running session. Settings are
+    /// changed while the app runs, and a change must not reset its memory.
+    pub fn set_thresholds(&mut self, lock_threshold: Duration, min_gap: Duration) {
+        self.lock_threshold = lock_threshold;
+        self.min_gap = min_gap;
+    }
+
+    pub fn min_gap(&self) -> Duration {
+        self.min_gap
     }
 
     pub fn mark_locked(&mut self, now: Instant) {
@@ -162,7 +180,7 @@ impl TriggerState {
         }
 
         if let Some(last) = self.last_shown {
-            if now.duration_since(last) < MIN_GAP {
+            if now.duration_since(last) < self.min_gap {
                 // One exception: an unlock shortly after a wake. The wake's
                 // ritual was built behind the lock screen and never seen, so
                 // this is the user's first real chance at it, not a duplicate.
@@ -230,6 +248,39 @@ mod tests {
             state.evaluate(TriggerKind::Wake, Instant::now()),
             Decision::Show
         );
+    }
+
+    #[test]
+    fn the_thresholds_are_yours_and_can_be_seconds() {
+        // Ten seconds of gap, five seconds of lock: every return is met.
+        let mut state =
+            TriggerState::with_thresholds(Duration::from_secs(5), Duration::from_secs(10));
+        state.mark_shown(ago(11));
+        assert_eq!(state.evaluate(TriggerKind::Wake, Instant::now()), Decision::Show);
+        state.mark_shown(ago(3));
+        assert_eq!(state.evaluate(TriggerKind::Wake, Instant::now()), Decision::TooSoon);
+
+        state.mark_shown(ago(60));
+        state.mark_locked(ago(6));
+        assert_eq!(
+            state.evaluate(TriggerKind::Unlock, Instant::now()),
+            Decision::Show,
+            "six seconds locked clears a five-second threshold"
+        );
+    }
+
+    #[test]
+    fn changing_thresholds_keeps_what_already_happened() {
+        let mut state = TriggerState::default();
+        state.mark_shown(ago(30));
+        state.set_thresholds(Duration::from_secs(5), Duration::from_secs(20));
+        assert_eq!(
+            state.evaluate(TriggerKind::Wake, Instant::now()),
+            Decision::Show,
+            "the last prompt is remembered and the new, shorter gap is honoured"
+        );
+        state.set_thresholds(Duration::from_secs(5), Duration::from_secs(60));
+        assert_eq!(state.evaluate(TriggerKind::Wake, Instant::now()), Decision::TooSoon);
     }
 
     #[test]

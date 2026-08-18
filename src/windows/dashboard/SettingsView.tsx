@@ -189,19 +189,26 @@ export function SettingsView({
         <AreaList />
       </Section>
 
+      {/* Seconds, not minutes: the people who want every return met want
+          ten seconds, and a field that could not say ten seconds was a
+          field that could not say what they meant. Zero is allowed and means
+          "always". Values set in the old minute fields are shown converted,
+          so nothing anyone chose is lost in the change of unit. */}
       <Section
         title="When it interrupts"
-        note="Longer thresholds mean fewer interruptions. There is no right answer, only yours."
+        note="Longer thresholds mean fewer interruptions. There is no right answer, only yours — and it takes effect on the next return, no restart needed."
       >
         <Number
-          label="Minutes locked before an unlock counts as returning"
-          value={values.unlock_threshold_min ?? "20"}
-          onChange={(v) => void update("unlock_threshold_min", v)}
+          label="Seconds locked before an unlock counts as returning"
+          unit="s"
+          value={values.unlock_threshold_sec ?? seconds(values.unlock_threshold_min, 20 * 60)}
+          onChange={(v) => void update("unlock_threshold_sec", v)}
         />
         <Number
-          label="Minimum minutes between prompts"
-          value={values.min_gap_min ?? "15"}
-          onChange={(v) => void update("min_gap_min", v)}
+          label="Minimum seconds between prompts"
+          unit="s"
+          value={values.min_gap_sec ?? seconds(values.min_gap_min, 15 * 60)}
+          onChange={(v) => void update("min_gap_sec", v)}
         />
       </Section>
 
@@ -802,26 +809,43 @@ function Button({
   );
 }
 
+/** An old minute value as seconds, or the default when there is none. */
+function seconds(minutes: string | undefined, fallback: number): string {
+  const n = window.Number(minutes);
+  return minutes !== undefined && window.Number.isFinite(n) && n >= 0
+    ? String(Math.round(n * 60))
+    : String(fallback);
+}
+
 function Number({
   label,
   value,
+  unit,
   onChange,
 }: {
   label: string;
   value: string;
+  /** Shown after the field, so the number is never read without its unit. */
+  unit?: string;
   onChange: (value: string) => void;
 }) {
   return (
     <label className="flex items-center justify-between gap-4 text-sm">
       <span className="text-[var(--color-ink-muted)]">{label}</span>
-      <input
-        type="number"
-        min={1}
-        max={240}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="ritual-field w-24 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-1.5 text-center outline-none focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
-      />
+      <span className="flex items-center gap-2">
+        <input
+          type="number"
+          min={0}
+          max={86_400}
+          step={1}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="ritual-field w-28 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-1.5 text-center outline-none focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+        />
+        {unit && (
+          <span className="w-3 text-xs text-[var(--color-ink-muted)]">{unit}</span>
+        )}
+      </span>
     </label>
   );
 }

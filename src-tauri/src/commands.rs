@@ -894,9 +894,23 @@ pub fn get_settings(db: State<'_, Db>) -> Result<Vec<(String, String)>, String> 
 }
 
 #[tauri::command]
-pub fn set_setting(db: State<'_, Db>, key: String, value: String) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
-    db::set_setting(&conn, &key, &value)
+pub fn set_setting(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        db::set_setting(&conn, &key, &value)?;
+    }
+    // The debounce reads its thresholds once at start; a change here reaches
+    // it now rather than at the next launch. After the lock is released -
+    // reload takes the same lock.
+    if key == "unlock_threshold_sec" || key == "min_gap_sec" {
+        crate::triggers::reload_thresholds(&app);
+    }
+    Ok(())
 }
 
 #[tauri::command]
