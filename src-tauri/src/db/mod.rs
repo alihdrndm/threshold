@@ -280,3 +280,80 @@ pub fn clear_history(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("could not clear intentions: {err}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    /// The exact shape of the tasks table at schema version 4, before the
+    /// calendar columns existed. Built by hand so the test proves the real
+    /// upgrade path, not a shortcut to head.
+    fn v4_database() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE contexts(id INTEGER PRIMARY KEY, name TEXT UNIQUE, sort_order INTEGER);
+            CREATE TABLE tasks(
+                id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                note TEXT,
+                context_id INTEGER REFERENCES contexts(id),
+                urgent INTEGER,
+                important INTEGER,
+                sort_order INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'open'
+                    CHECK(status IN ('open','done','archived','deleted')),
+                created_ts TEXT,
+                completed_ts TEXT
+            );
+            PRAGMA user_version = 4;
+            COMMIT;
+            "#,
+        )
+        .expect("v4 schema");
+        conn
+    }
+
+    #[test]
+    fn upgrading_from_v4_keeps_existing_tasks_and_adds_the_calendar_columns() {
+        let conn = v4_database();
+        conn.execute(
+            "INSERT INTO tasks(id, title, urgent, important, sort_order, status, created_ts)
+             VALUES(7, 'a task that predates the calendar', 0, 1, 3, 'open', 'then')",
+            [],
+        )
+        .unwrap();
+
+        // The real, stepwise migration - the same one the app runs on launch.
+        migrate(&conn).expect("v4 -> v5 migration");
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 5, "the schema advanced to 5");
+
+        // The task is untouched, and the new columns exist and default to NULL.
+        let task = tasks::by_id(&conn, 7).unwrap().unwrap();
+        assert_eq!(task.title, "a task that predates the calendar");
+        assert_eq!(task.sort_order, 3);
+        assert_eq!(task.urgent, Some(false));
+        assert_eq!(task.important, Some(true));
+        assert_eq!(task.scheduled_ts, None);
+        assert_eq!(task.calendar_event_id, None);
+        assert_eq!(task.calendar_html_link, None);
+    }
+
+    #[test]
+    fn migrating_an_already_current_database_is_a_no_op() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let before: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        // Running it again must not fail on a duplicate ADD COLUMN.
+        migrate(&conn).unwrap();
+        let after: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(before, after);
+        assert_eq!(after, 5);
+    }
+}
