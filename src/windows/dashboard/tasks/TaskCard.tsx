@@ -3,6 +3,7 @@ import { CSS } from "@dnd-kit/utilities";
 import clsx from "clsx";
 import type { Task } from "@/lib/tauri";
 import { AreaControl } from "./AreaMenu";
+import { SlotControl } from "./SlotControl";
 
 /**
  * A draggable task.
@@ -143,6 +144,13 @@ export function TaskCard({
         <span className="text-[10px] tracking-[0.14em] uppercase text-[var(--zone-ink-muted)] select-none">
           {place}
         </span>
+      )}
+
+      {/* The slot, when this task lives in Schedule (not urgent, important).
+          Read before the area, the way a calendar time is the first thing you
+          look for on a scheduled thing. */}
+      {!done && task.urgent === false && task.important === true && (
+        <SlotControl task={task} />
       )}
 
       {/* The one home this task has, or the way to give it one. Before Focus:

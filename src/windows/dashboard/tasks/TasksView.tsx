@@ -26,13 +26,20 @@ import {
   moveTask,
   removeContext,
   renameContext,
+  calendarStatus,
+  calendarSyncNow,
+  openUrl,
+  rescheduleTask,
   reorderTasks,
   setTaskContext,
   setTaskStatus,
+  unscheduleTask,
   type Task,
   type TaskContext,
 } from "@/lib/tauri";
+import { listen } from "@tauri-apps/api/event";
 import { AreasContext } from "./AreaMenu";
+import { CalendarContext } from "./SlotControl";
 import { Popover } from "./Popover";
 import { parseTitle, suggestAreas, tagAtCaret } from "./areas";
 import { DoneToday, MatrixView } from "./MatrixView";
@@ -76,6 +83,7 @@ export function TasksView({
   const [caret, setCaret] = useState(0);
   const [lit, setLit] = useState(0);
   const [newArea, setNewArea] = useState<string | null>(null);
+  const [calConnected, setCalConnected] = useState(false);
   const closeCompletions = useCallback(() => setCaret(0), []);
   // The menu on an area chip (rename / remove), and a chip mid-rename.
   const [chipMenu, setChipMenu] = useState<{
@@ -113,6 +121,28 @@ export function TasksView({
 
   useEffect(() => {
     void refresh();
+    calendarStatus()
+      .then((s) => setCalConnected(s.connected))
+      .catch(() => setCalConnected(false));
+  }, []);
+
+  // The calendar reconciler tells the whole app when a scheduled task's slot
+  // moved or vanished; re-read rather than poll. On tab focus, nudge a sync so
+  // a change made on the phone shows without waiting for the 2-minute loop.
+  useEffect(() => {
+    const unlisten = listen("tasks-changed", () => void refresh());
+    let last = 0;
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - last < 30_000) return;
+      last = now;
+      void calendarSyncNow().catch(() => {});
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      void unlisten.then((off) => off());
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   const visible = useMemo(
@@ -390,6 +420,14 @@ export function TasksView({
   return (
     <AreasContext.Provider
       value={{ contexts, setArea: (t, id) => run(() => setArea(t, id)) }}
+    >
+    <CalendarContext.Provider
+      value={{
+        connected: calConnected,
+        reschedule: (t, ts) => run(async () => { await rescheduleTask(t.id, ts); await refresh(); }),
+        remove: (t) => run(async () => { await unscheduleTask(t.id); await refresh(); }),
+        open: (url) => void openUrl(url),
+      }}
     >
     <div className="flex h-full flex-col gap-5 p-8">
       {/* The drag layer wraps the chips as well as the board: they take
@@ -698,6 +736,7 @@ export function TasksView({
         </DragOverlay>
       </DndContext>
     </div>
+    </CalendarContext.Provider>
     </AreasContext.Provider>
   );
 }

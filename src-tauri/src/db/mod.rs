@@ -203,6 +203,34 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("migration 4 failed: {err}"))?;
     }
 
+    if version < 5 {
+        // The Schedule quadrant's own meaning, written down.
+        //
+        // The list still has no due dates - a due date is a deadline, and
+        // deadlines are exactly the teeth this feature refuses to grow. This
+        // is different: "Schedule" already means "for what deserves a date",
+        // and a quadrant that promised a date and never gave one was a
+        // promise. `scheduled_ts` is only ever set while a task sits in
+        // Schedule and is cleared the moment it leaves. It is not a deadline;
+        // it is where the task lives on the calendar for as long as it lives
+        // in that quadrant. The event id and link are the calendar's half of
+        // the same fact.
+        //
+        // Unix seconds, like sessions: a slot is compared and moved, not read
+        // back as text.
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE tasks ADD COLUMN scheduled_ts INTEGER;
+            ALTER TABLE tasks ADD COLUMN calendar_event_id TEXT;
+            ALTER TABLE tasks ADD COLUMN calendar_html_link TEXT;
+            PRAGMA user_version = 5;
+            COMMIT;
+            "#,
+        )
+        .map_err(|err| format!("migration 5 failed: {err}"))?;
+    }
+
     Ok(())
 }
 

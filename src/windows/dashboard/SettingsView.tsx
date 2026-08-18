@@ -3,6 +3,10 @@ import clsx from "clsx";
 import {
   addContext,
   addQuote,
+  calendarStatus,
+  calendarSyncNow,
+  googleConnect,
+  googleDisconnect,
   chooseQuote,
   clearHistory,
   emergencyUnblock,
@@ -21,10 +25,12 @@ import {
   resumeNow,
   setSetting,
   type Diagnostics,
+  type CalendarStatus,
   type Quote,
   type QuoteSurface,
   type TaskContext,
 } from "@/lib/tauri";
+import { listen } from "@tauri-apps/api/event";
 import { useSiteEditor } from "@/sites/useSiteEditor";
 import { CATEGORIES } from "../popup/ritual/copy";
 import type { Appearance } from "@/appearance";
@@ -187,6 +193,20 @@ export function SettingsView({
         note="The one home a task has — Job, Personal, Side, or whatever your life is actually divided into. Type #name when adding a task, or drop a card on an area on the Tasks tab. Removing an area leaves its tasks where they are, unlabelled. Eight at most: past that they stop being areas and start being tags."
       >
         <AreaList />
+      </Section>
+
+      <Section
+        title="Working hours"
+        note="When a task dropped into Schedule may be booked. Threshold picks the soonest free gap inside these hours, on these days, keeping a buffer around whatever is already on your Google Calendar."
+      >
+        <WorkingHours values={values} update={update} />
+      </Section>
+
+      <Section
+        title="Google Calendar"
+        note="Connect a calendar and a task dropped into Schedule gets a 30-minute event at the next free slot — yours to move here or in Google. Threshold uses your own Google credentials; nothing is shared with anyone else."
+      >
+        <GoogleCalendar />
       </Section>
 
       {/* Seconds, not minutes: the people who want every return met want
@@ -447,6 +467,253 @@ export function SettingsView({
  * is a settings row among settings rows, and borrowing the ritual's composure
  * here would make a list you edit look like a decision you are making.
  */
+/** Seven day toggles + open/close times + buffer, saved as they change. */
+function WorkingHours({
+  values,
+  update,
+}: {
+  values: Record<string, string>;
+  update: (key: string, value: string) => void;
+}) {
+  const days = (values.work_days ?? "1,2,3,4,5")
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
+  const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  function toggleDay(n: number) {
+    const set = new Set(days);
+    const key = String(n);
+    if (set.has(key)) set.delete(key);
+    else set.add(key);
+    const next = [...set]
+      .map((x) => parseInt(x, 10))
+      .sort((a, b) => a - b)
+      .join(",");
+    update("work_days", next);
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-2">
+        {labels.map((label, i) => {
+          const n = i + 1;
+          const on = days.includes(String(n));
+          return (
+            <button
+              key={label}
+              type="button"
+              aria-pressed={on}
+              onClick={() => toggleDay(n)}
+              className={clsx(
+                "ritual-pressable rounded-full border px-3 py-1.5 text-xs",
+                on
+                  ? "border-[var(--color-accent)] text-[var(--color-ink)]"
+                  : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
+              )}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap gap-6">
+        <TimeField
+          label="Opens"
+          value={values.work_start ?? "09:00"}
+          onChange={(v) => update("work_start", v)}
+        />
+        <TimeField
+          label="Closes"
+          value={values.work_end ?? "18:00"}
+          onChange={(v) => update("work_end", v)}
+        />
+        <Number
+          label="Buffer around events"
+          unit="min"
+          value={values.cal_buffer_min ?? "15"}
+          onChange={(v) => update("cal_buffer_min", v)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TimeField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="flex items-center gap-3 text-sm">
+      <span className="text-[var(--color-ink-muted)]">{label}</span>
+      <input
+        type="time"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="ritual-field rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-1.5 text-center text-[var(--color-ink)] outline-none focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+      />
+    </label>
+  );
+}
+
+/**
+ * Connect Google, or set it up. The client id and optional secret are the
+ * user's own - the app ships none - so the section carries the steps to make
+ * one, collapsed until asked for.
+ */
+function GoogleCalendar() {
+  const [status, setStatus] = useState<CalendarStatus | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [id, setId] = useState("");
+  const [secret, setSecret] = useState("");
+  const [showHelp, setShowHelp] = useState(false);
+
+  async function refresh() {
+    setStatus(await calendarStatus().catch(() => null));
+  }
+  useEffect(() => {
+    void refresh();
+    const unlisten = listen("calendar-status", () => void refresh());
+    return () => void unlisten.then((off) => off());
+  }, []);
+
+  async function saveCreds() {
+    await setSetting("google_client_id", id.trim());
+    await setSetting("google_client_secret", secret.trim());
+  }
+
+  const connected = status?.connected ?? false;
+
+  return (
+    <div className="flex flex-col gap-4">
+      {connected ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded-full border border-[var(--color-accent)] px-3 py-1.5 text-xs text-[var(--color-ink)]">
+            Connected
+          </span>
+          <Button
+            onClick={async () => {
+              setBusy("Syncing…");
+              const msg = await calendarSyncNow().catch((e) =>
+                e instanceof Error ? e.message : String(e),
+              );
+              setBusy(msg);
+              await refresh();
+            }}
+          >
+            Sync now
+          </Button>
+          <Button
+            onClick={async () => {
+              await googleDisconnect();
+              await refresh();
+            }}
+          >
+            Disconnect
+          </Button>
+          {busy && (
+            <span className="text-xs text-[var(--color-ink-muted)]">{busy}</span>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-[var(--color-ink-muted)]">Client ID</span>
+            <input
+              value={id}
+              onChange={(event) => setId(event.target.value)}
+              placeholder="…apps.googleusercontent.com"
+              className="ritual-field w-full rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-[var(--color-ink-muted)]">
+              Client secret (optional)
+            </span>
+            <input
+              value={secret}
+              onChange={(event) => setSecret(event.target.value)}
+              className="ritual-field w-full rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              onClick={async () => {
+                if (!id.trim()) {
+                  setBusy("Paste your Client ID first.");
+                  return;
+                }
+                setBusy("Opening your browser…");
+                await saveCreds();
+                try {
+                  await googleConnect();
+                  setBusy(null);
+                } catch (e) {
+                  setBusy(e instanceof Error ? e.message : String(e));
+                }
+                await refresh();
+              }}
+            >
+              Connect
+            </Button>
+            <button
+              type="button"
+              onClick={() => setShowHelp((h) => !h)}
+              className="text-xs text-[var(--color-ink-muted)] underline underline-offset-2 hover:text-[var(--color-ink)]"
+            >
+              How to get a Client ID
+            </button>
+            {busy && (
+              <span className="text-xs text-[var(--color-ink-muted)]">{busy}</span>
+            )}
+          </div>
+          {showHelp && (
+            <ol className="flex list-decimal flex-col gap-1 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] p-4 pl-8 text-xs text-[var(--color-ink-muted)]">
+              <li>
+                Open{" "}
+                <button
+                  type="button"
+                  onClick={() => void openHelp()}
+                  className="text-[var(--color-ink)] underline underline-offset-2"
+                >
+                  console.cloud.google.com
+                </button>{" "}
+                and make a project.
+              </li>
+              <li>APIs &amp; Services &rarr; Library &rarr; enable Google Calendar API.</li>
+              <li>
+                OAuth consent screen &rarr; External &rarr; fill the basics &rarr; Publish
+                app (choose In production; Testing expires the link every 7 days).
+              </li>
+              <li>Credentials &rarr; Create credentials &rarr; OAuth client ID.</li>
+              <li>Application type &rarr; Desktop app.</li>
+              <li>Copy the Client ID here and press Connect.</li>
+            </ol>
+          )}
+        </div>
+      )}
+      {status?.lastSyncStatus && (
+        <p className="text-xs text-[var(--color-ink-muted)]">
+          Last sync: {status.lastSyncStatus}
+          {status.lastSyncTs
+            ? ` · ${new Date(status.lastSyncTs * 1000).toLocaleString()}`
+            : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
+async function openHelp() {
+  const { openUrl } = await import("@/lib/tauri");
+  await openUrl("https://console.cloud.google.com/");
+}
+
 /**
  * The areas, editable in place. Click a name to rename it; Enter keeps,
  * Escape forgets. The × removes the area and only the area - its tasks stay,

@@ -217,6 +217,10 @@ export interface Task {
   status: "open" | "done" | "archived" | "deleted";
   createdTs: string;
   completedTs: string | null;
+  /** The calendar slot this task holds while it sits in Schedule (unix seconds). */
+  scheduledTs: number | null;
+  calendarEventId: string | null;
+  calendarHtmlLink: string | null;
 }
 
 export function listContexts(): Promise<TaskContext[]> {
@@ -272,6 +276,48 @@ export function moveTask(
  */
 export function reorderTasks(ids: number[]): Promise<void> {
   return invoke<void>("reorder_tasks", { ids });
+}
+
+/** Move a scheduled task's calendar event: null start = next free slot. */
+export function rescheduleTask(
+  taskId: number,
+  startTs: number | null,
+): Promise<number> {
+  return invoke<number>("reschedule_task", { taskId, startTs });
+}
+
+/** Take a task off the calendar but leave it in Schedule (dateless). */
+export function unscheduleTask(taskId: number): Promise<void> {
+  return invoke<void>("unschedule_task", { taskId });
+}
+
+export interface CalendarStatus {
+  connected: boolean;
+  lastSyncTs: number | null;
+  lastSyncStatus: string | null;
+}
+
+export function calendarStatus(): Promise<CalendarStatus> {
+  return invoke<CalendarStatus>("calendar_status");
+}
+
+/** Begin the Google consent flow. Resolves when connected, rejects with why. */
+export function googleConnect(): Promise<void> {
+  return invoke<void>("google_connect");
+}
+
+export function googleDisconnect(): Promise<void> {
+  return invoke<void>("google_disconnect");
+}
+
+/** Reconcile now. Returns a short status string. */
+export function calendarSyncNow(): Promise<string> {
+  return invoke<string>("calendar_sync_now");
+}
+
+/** Open a URL in the default browser. */
+export function openUrl(url: string): Promise<void> {
+  return invoke<void>("open_url", { url });
 }
 
 export function setTaskStatus(id: number, status: string): Promise<void> {

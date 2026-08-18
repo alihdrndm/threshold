@@ -280,14 +280,46 @@ pub fn add_task(db: State<'_, Db>, task: tasks::NewTask) -> Result<i64, String> 
 
 #[tauri::command]
 pub fn move_task(
+    app: tauri::AppHandle,
     db: State<'_, Db>,
     id: i64,
     urgent: Option<bool>,
     important: Option<bool>,
     sort_order: Option<i64>,
 ) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
-    tasks::set_quadrant(&conn, id, urgent, important, sort_order.unwrap_or(0))
+    let before = {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        let before = schedule_state(&conn, id);
+        tasks::set_quadrant(&conn, id, urgent, important, sort_order.unwrap_or(0))?;
+        before
+    };
+    reconcile_schedule(&app, &db, id, before);
+    Ok(())
+}
+
+/// Whether a task is *actively* in Schedule: the quadrant's flags and still
+/// open. A done or deleted task keeps its flags but is no longer scheduled, so
+/// completing one is a departure the calendar must hear about.
+fn schedule_state(conn: &rusqlite::Connection, id: i64) -> bool {
+    tasks::by_id(conn, id).ok().flatten().is_some_and(|t| {
+        t.urgent == Some(false) && t.important == Some(true) && t.status == "open"
+    })
+}
+
+/// After a task changed, tell the calendar if it entered or left Schedule.
+/// Off the main thread; never fails the change that triggered it.
+fn reconcile_schedule(app: &tauri::AppHandle, db: &State<'_, Db>, id: i64, before: bool) {
+    let after = {
+        match db.0.lock() {
+            Ok(conn) => schedule_state(&conn, id),
+            Err(_) => return,
+        }
+    };
+    if before && !after {
+        crate::calendar::sync::on_task_left_schedule(app.clone(), id);
+    } else if !before && after {
+        crate::calendar::sync::on_task_entered_schedule(app.clone(), id);
+    }
 }
 
 /// The order of one zone, as the user left it. Ids get their index; everything
@@ -299,9 +331,20 @@ pub fn reorder_tasks(db: State<'_, Db>, ids: Vec<i64>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn set_task_status(db: State<'_, Db>, id: i64, status: String) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
-    tasks::set_status(&conn, id, &status)
+pub fn set_task_status(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    id: i64,
+    status: String,
+) -> Result<(), String> {
+    let before = {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        let before = schedule_state(&conn, id);
+        tasks::set_status(&conn, id, &status)?;
+        before
+    };
+    reconcile_schedule(&app, &db, id, before);
+    Ok(())
 }
 
 #[derive(serde::Serialize)]
@@ -812,9 +855,78 @@ pub fn clear_history(db: State<'_, Db>) -> Result<(), String> {
 
 /// Give a task a date: move it to the Schedule quadrant, joining the end.
 #[tauri::command]
-pub fn schedule_task(db: State<'_, Db>, task_id: i64) -> Result<(), String> {
+pub fn schedule_task(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    task_id: i64,
+) -> Result<(), String> {
+    let before = {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        let before = schedule_state(&conn, task_id);
+        tasks::append_to_quadrant(&conn, task_id, Some(false), Some(true))?;
+        before
+    };
+    reconcile_schedule(&app, &db, task_id, before);
+    Ok(())
+}
+
+// ---- Calendar commands -----------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarStatus {
+    pub connected: bool,
+    pub last_sync_ts: Option<i64>,
+    pub last_sync_status: Option<String>,
+}
+
+#[tauri::command]
+pub fn calendar_status(db: State<'_, Db>) -> Result<CalendarStatus, String> {
     let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
-    tasks::append_to_quadrant(&conn, task_id, Some(false), Some(true))
+    Ok(CalendarStatus {
+        connected: db::get_setting(&conn, "google_connected").as_deref() == Some("1"),
+        last_sync_ts: db::get_setting(&conn, "google_last_sync_ts").and_then(|s| s.parse().ok()),
+        last_sync_status: db::get_setting(&conn, "google_last_sync_status"),
+    })
+}
+
+/// Begin the OAuth flow. Blocking (browser + loopback), so run it off-thread
+/// and report through the `calendar-status` event the flow emits.
+#[tauri::command(async)]
+pub fn google_connect(app: tauri::AppHandle) -> Result<(), String> {
+    crate::calendar::oauth::connect(&app)
+}
+
+#[tauri::command]
+pub fn google_disconnect(app: tauri::AppHandle) {
+    crate::calendar::oauth::disconnect(&app);
+}
+
+#[tauri::command(async)]
+pub fn calendar_sync_now(app: tauri::AppHandle) -> Result<String, String> {
+    crate::calendar::sync::poll_once(&app)
+}
+
+/// Move a scheduled task's event. `start_ts` None = next free slot.
+#[tauri::command(async)]
+pub fn reschedule_task(
+    app: tauri::AppHandle,
+    task_id: i64,
+    start_ts: Option<i64>,
+) -> Result<i64, String> {
+    crate::calendar::sync::reschedule(&app, task_id, start_ts)
+}
+
+/// Take a task off the calendar but leave it in Schedule.
+#[tauri::command(async)]
+pub fn unschedule_task(app: tauri::AppHandle, task_id: i64) -> Result<(), String> {
+    crate::calendar::sync::remove_from_calendar(&app, task_id)
+}
+
+/// Open a URL in the default browser (the event's Google Calendar page).
+#[tauri::command]
+pub fn open_url(url: String) {
+    crate::calendar::oauth::open_url(&url);
 }
 
 /// The wall, sent away early by a click. It would have left on its own; this

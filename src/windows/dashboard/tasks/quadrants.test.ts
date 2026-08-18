@@ -21,6 +21,9 @@ function task(id: number, flags?: { urgent: boolean; important: boolean }): Task
     status: "open",
     createdTs: "",
     completedTs: null,
+    scheduledTs: null,
+    calendarEventId: null,
+    calendarHtmlLink: null,
   };
 }
 

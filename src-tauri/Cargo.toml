@@ -18,7 +18,17 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 threshold-protocol = { path = "../crates/threshold-protocol" }
-windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_RemoteDesktop", "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_Graphics_Gdi", "Win32_System_Console", "Win32_System_StationsAndDesktops"] }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_RemoteDesktop", "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_Graphics_Gdi", "Win32_System_Console", "Win32_System_StationsAndDesktops", "Win32_Security_Cryptography"] }
+# The calendar integration is the app's only network code. reqwest with the
+# native (Schannel) TLS backend, so there is no bundled root store to keep
+# fresh and no C toolchain to build rustls-ring on Windows. Blocking, because
+# every worker in this app is a plain std::thread. sha2/base64/getrandom are
+# for OAuth PKCE. All already in the lock tree via tauri, so this adds compile
+# surface but little new download.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "native-tls"] }
+base64 = "0.22"
+sha2 = "0.10"
+getrandom = "0.3"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 dirs = "6.0.0"
 

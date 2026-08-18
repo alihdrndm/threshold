@@ -1,4 +1,5 @@
 mod blocked;
+mod calendar;
 mod checkin;
 mod commands;
 mod db;
@@ -83,6 +84,13 @@ pub fn run() {
             commands::schedule_task,
             commands::clear_history,
             commands::dismiss_wall,
+            commands::calendar_status,
+            commands::google_connect,
+            commands::google_disconnect,
+            commands::calendar_sync_now,
+            commands::reschedule_task,
+            commands::unschedule_task,
+            commands::open_url,
             commands::dismiss_checkin,
         ])
         .setup(|app| {
@@ -122,6 +130,10 @@ pub fn run() {
             // ports cannot be bound, blocking is unaffected and only the quote
             // is lost.
             wall::listen(&handle);
+
+            // The calendar reconciler: quiet until the user connects Google in
+            // Settings, then it keeps scheduled tasks and their events in step.
+            calendar::init(&handle);
 
             // Launched by the logon task or the autostart entry: this *is* the
             // boot moment, so ask for the ritual straight away.

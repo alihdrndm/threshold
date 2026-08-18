@@ -89,7 +89,12 @@ fn handle_system_event(app: &AppHandle, event: SystemEvent) {
             with_state(|state| state.mark_locked(now));
             return;
         }
-        SystemEvent::Resumed => TriggerKind::Wake,
+        SystemEvent::Resumed => {
+            // A wake is a good moment to reconcile the calendar: the machine
+            // may have slept through a change made on the phone.
+            crate::calendar::sync::request_poll();
+            TriggerKind::Wake
+        }
         SystemEvent::Unlocked => TriggerKind::Unlock,
     };
 

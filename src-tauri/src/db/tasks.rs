@@ -7,8 +7,13 @@
 //! Position on the Eisenhower matrix is stored as two flags rather than a
 //! quadrant name, so "unclassified" has an honest representation - both NULL,
 //! which is the Inbox.
+//!
+//! One exception to "no dates", and it is the quadrant's own: a task in
+//! Schedule carries the slot it holds on the calendar (`scheduled_ts`, unix
+//! seconds) and the event behind it. Not a deadline - a place. Set only while
+//! the task sits in Schedule, cleared when it leaves.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 // The "Do First" soft cap lives in the UI (windows/dashboard/tasks/quadrants.ts)
@@ -37,6 +42,10 @@ pub struct Task {
     pub status: String,
     pub created_ts: String,
     pub completed_ts: Option<String>,
+    /// The slot this task holds on the calendar, while it sits in Schedule.
+    pub scheduled_ts: Option<i64>,
+    pub calendar_event_id: Option<String>,
+    pub calendar_html_link: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,11 +68,15 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         status: row.get(7)?,
         created_ts: row.get(8)?,
         completed_ts: row.get(9)?,
+        scheduled_ts: row.get(10)?,
+        calendar_event_id: row.get(11)?,
+        calendar_html_link: row.get(12)?,
     })
 }
 
 const SELECT: &str = "SELECT id, title, note, context_id, urgent, important, sort_order, status,
-                             created_ts, completed_ts FROM tasks";
+                             created_ts, completed_ts, scheduled_ts, calendar_event_id,
+                             calendar_html_link FROM tasks";
 
 pub fn contexts(conn: &Connection) -> Result<Vec<Context>, String> {
     let mut stmt = conn
@@ -289,6 +302,57 @@ pub fn append_to_quadrant(
     Ok(())
 }
 
+/// Is this task in the Schedule quadrant (not urgent, important)? A task that
+/// does not exist is not in Schedule - the honest answer, not an error.
+pub fn is_in_schedule(conn: &Connection, id: i64) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT urgent = 0 AND important = 1 FROM tasks WHERE id = ?1",
+        [id],
+        |row| row.get::<_, Option<bool>>(0),
+    )
+    .optional()
+    .map(|v| v.flatten().unwrap_or(false))
+    .map_err(|err| format!("could not read task {id}: {err}"))
+}
+
+/// One task, whatever its status.
+pub fn by_id(conn: &Connection, id: i64) -> Result<Option<Task>, String> {
+    let mut stmt = conn
+        .prepare(&format!("{SELECT} WHERE id = ?1"))
+        .map_err(|err| format!("could not read task {id}: {err}"))?;
+    let mut rows = stmt
+        .query_map([id], row_to_task)
+        .map_err(|err| format!("could not read task {id}: {err}"))?;
+    match rows.next() {
+        None => Ok(None),
+        Some(row) => row
+            .map(Some)
+            .map_err(|err| format!("could not read task {id}: {err}")),
+    }
+}
+
+/// Record the slot a task holds and the event that holds it.
+pub fn set_schedule(
+    conn: &Connection,
+    id: i64,
+    scheduled_ts: Option<i64>,
+    event_id: Option<&str>,
+    html_link: Option<&str>,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE tasks SET scheduled_ts = ?1, calendar_event_id = ?2, calendar_html_link = ?3
+         WHERE id = ?4",
+        rusqlite::params![scheduled_ts, event_id, html_link, id],
+    )
+    .map(|_| ())
+    .map_err(|err| format!("could not record the slot: {err}"))
+}
+
+/// Forget the slot and the event. The task itself is untouched.
+pub fn clear_schedule(conn: &Connection, id: i64) -> Result<(), String> {
+    set_schedule(conn, id, None, None, None)
+}
+
 pub fn set_status(conn: &Connection, id: i64, status: &str) -> Result<(), String> {
     if !matches!(status, "open" | "done" | "archived" | "deleted") {
         return Err(format!("unknown status: {status}"));
@@ -485,6 +549,25 @@ mod tests {
         let conn = memory_db();
         let id = add(&conn, &new("finish")).unwrap();
         assert!(set_status(&conn, id, "procrastinating").is_err());
+    }
+
+    #[test]
+    fn a_slot_is_recorded_and_forgotten() {
+        let conn = memory_db();
+        let id = add(&conn, &new("plan the week")).unwrap();
+        set_quadrant(&conn, id, Some(false), Some(true), 0).unwrap();
+        assert!(is_in_schedule(&conn, id).unwrap());
+        assert!(!is_in_schedule(&conn, 999).unwrap());
+
+        set_schedule(&conn, id, Some(1_700_000_000), Some("evt1"), Some("https://x")).unwrap();
+        let task = by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(task.scheduled_ts, Some(1_700_000_000));
+        assert_eq!(task.calendar_event_id.as_deref(), Some("evt1"));
+
+        clear_schedule(&conn, id).unwrap();
+        let task = by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(task.scheduled_ts, None);
+        assert_eq!(task.calendar_event_id, None);
     }
 
     #[test]
