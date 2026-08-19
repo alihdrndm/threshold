@@ -57,24 +57,13 @@ export function SlotControl({ task }: { task: Task }) {
               Connect Google Calendar in Settings
             </Item>
           ) : picking ? (
-            <li role="none" className="p-1">
-              {/* A native picker: no dependency, keyboard-accessible, and it
-                  speaks the user's locale. Enter or the button commits. */}
-              <input
-                type="datetime-local"
-                autoFocus
-                defaultValue={toLocalInput(task.scheduledTs)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    const ts = fromLocalInput((event.target as HTMLInputElement).value);
-                    if (ts !== null) cal.reschedule(task, ts);
-                    close();
-                  }
-                }}
-                className="w-full rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-2 py-1.5 text-sm text-[var(--color-ink)] outline-none"
-                aria-label="Pick a date and time"
-              />
-            </li>
+            <PickTime
+              initial={toLocalInput(task.scheduledTs)}
+              onCommit={(ts) => {
+                cal.reschedule(task, ts);
+                close();
+              }}
+            />
           ) : (
             <>
               <Item
@@ -110,6 +99,51 @@ export function SlotControl({ task }: { task: Task }) {
         </Popover>
       )}
     </>
+  );
+}
+
+/**
+ * The "pick a time" panel: a native datetime input plus an explicit Set.
+ *
+ * The Set button is the point. The native calendar flyout only changes the
+ * input's value — it commits nothing — and an outside click closes the whole
+ * popover. Without a visible commit control, picking a date and clicking away
+ * silently discarded the choice. Enter commits too, for keyboard users.
+ */
+function PickTime({
+  initial,
+  onCommit,
+}: {
+  initial: string;
+  onCommit: (ts: number) => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const ts = fromLocalInput(value);
+  const commit = () => {
+    if (ts !== null) onCommit(ts);
+  };
+  return (
+    <li role="none" className="flex flex-col gap-1 p-1">
+      <input
+        type="datetime-local"
+        autoFocus
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+        }}
+        className="w-full rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-2 py-1.5 text-sm text-[var(--color-ink)] outline-none"
+        aria-label="Pick a date and time"
+      />
+      <button
+        type="button"
+        onClick={commit}
+        disabled={ts === null}
+        className="w-full rounded-lg bg-[var(--color-fill-selected)] px-2.5 py-1.5 text-left text-[var(--color-ink)] transition duration-100 hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
+      >
+        Set
+      </button>
+    </li>
   );
 }
 
