@@ -1,4 +1,11 @@
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { Task } from "@/lib/tauri";
 import { Popover } from "./Popover";
 import { formatSlot, fromLocalInput, toLocalInput } from "./slot";
@@ -59,10 +66,8 @@ export function SlotControl({ task }: { task: Task }) {
           ) : picking ? (
             <PickTime
               initial={toLocalInput(task.scheduledTs)}
-              onCommit={(ts) => {
-                cal.reschedule(task, ts);
-                close();
-              }}
+              onCommit={(ts) => cal.reschedule(task, ts)}
+              onDone={close}
             />
           ) : (
             <>
@@ -102,47 +107,99 @@ export function SlotControl({ task }: { task: Task }) {
   );
 }
 
+/** How long a pick may rest before it saves itself. Long enough to arrow
+    through hours without a save per step; short enough that the answer
+    arrives while the eye is still on the panel. */
+const SETTLE_MS = 700;
+
 /**
- * The "pick a time" panel: a native datetime input plus an explicit Set.
- *
- * The Set button is the point. The native calendar flyout only changes the
- * input's value — it commits nothing — and an outside click closes the whole
- * popover. Without a visible commit control, picking a date and clicking away
- * silently discarded the choice. Enter commits too, for keyboard users.
+ * The "pick a time" panel. There is no button: every complete pick commits
+ * itself once it settles, Enter commits at once and closes, and a change
+ * still pending when the popover closes is flushed on the way out. The
+ * caption is the whole answer — "saves as you pick" until the first save,
+ * then the saved slot in the card's own words, so the panel teaches the
+ * label the card is about to show.
  */
 function PickTime({
   initial,
   onCommit,
+  onDone,
 }: {
   initial: string;
   onCommit: (ts: number) => void;
+  onDone: () => void;
 }) {
   const [value, setValue] = useState(initial);
-  const ts = fromLocalInput(value);
-  const commit = () => {
-    if (ts !== null) onCommit(ts);
-  };
+  const [saved, setSaved] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  // What the calendar already holds. Commits compare against this so closing
+  // the panel untouched, or settling on the original time, sends nothing.
+  const sent = useRef(initial);
+  const pending = useRef(initial);
+
+  const commit = useCallback(
+    (v: string) => {
+      const ts = fromLocalInput(v);
+      if (ts === null || v === sent.current) return false;
+      sent.current = v;
+      onCommit(ts);
+      return true;
+    },
+    [onCommit],
+  );
+
+  // The flush: whatever is still resting when the panel unmounts - outside
+  // click, Escape, the menu closing under it - is saved on the way out.
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(timer.current);
+      commit(pending.current);
+    };
+  }, [commit]);
+
   return (
-    <li role="none" className="flex flex-col gap-1 p-1">
+    <li role="none" className="slot-picker flex w-52 flex-col gap-1.5 p-1">
+      <span className="px-0.5 text-[10px] tracking-[0.14em] text-[var(--color-ink-muted)] uppercase">
+        Pick a time
+      </span>
       <input
         type="datetime-local"
         autoFocus
         value={value}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") commit();
+        onChange={(event) => {
+          const v = event.target.value;
+          setValue(v);
+          pending.current = v;
+          setSaved(false);
+          window.clearTimeout(timer.current);
+          timer.current = window.setTimeout(() => {
+            if (commit(v)) setSaved(true);
+          }, SETTLE_MS);
         }}
-        className="w-full rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-2 py-1.5 text-sm text-[var(--color-ink)] outline-none"
-        aria-label="Pick a date and time"
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            window.clearTimeout(timer.current);
+            commit(pending.current);
+            onDone();
+          }
+        }}
+        className="w-full rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-2.5 py-2 text-sm text-[var(--color-ink)] outline-none"
+        aria-label="Pick a date and time. Saves as you pick"
       />
-      <button
-        type="button"
-        onClick={commit}
-        disabled={ts === null}
-        className="w-full rounded-lg bg-[var(--color-fill-selected)] px-2.5 py-1.5 text-left text-[var(--color-ink)] transition duration-100 hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
+      <p
+        key={saved ? `saved-${sent.current}` : "hint"}
+        aria-live="polite"
+        className="slot-caption flex min-h-4 items-center gap-1.5 px-0.5 text-[11px] text-[var(--color-ink-muted)]"
       >
-        Set
-      </button>
+        {saved ? (
+          <>
+            <span className="slot-saved-dot shrink-0" aria-hidden />
+            Saved · {formatSlot(fromLocalInput(sent.current), new Date())}
+          </>
+        ) : (
+          "Saves as you pick"
+        )}
+      </p>
     </li>
   );
 }

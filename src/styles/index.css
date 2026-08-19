@@ -459,6 +459,77 @@ textarea {
   }
 }
 
+/* The time picker inside the slot menu. It replaces the menu's list, so it
+   enters the way the list did - from nearly its final place, on the same
+   curve - and spends its one moment of accent on the saved dot. The input
+   commits itself; there is no button, so the caption is the interface's
+   whole answer. */
+.slot-picker {
+  animation: slot-picker-in 160ms var(--ease-out) both;
+}
+@keyframes slot-picker-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.slot-picker input {
+  font-variant-numeric: tabular-nums;
+  transition:
+    border-color 150ms var(--ease-out),
+    box-shadow 150ms var(--ease-out);
+}
+.slot-picker input:focus {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  box-shadow: 0 0 0 3px var(--glow);
+}
+.slot-picker input::-webkit-calendar-picker-indicator {
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity 150ms ease;
+}
+.slot-picker input::-webkit-calendar-picker-indicator:hover {
+  opacity: 0.9;
+}
+/* The caption swaps between "saves as you pick" and "saved". Keyed in React so
+   each swap replays this - a fade with a 2px rise, small enough to read as the
+   text settling rather than arriving. */
+.slot-caption {
+  animation: slot-caption-in 160ms var(--ease-out) both;
+}
+@keyframes slot-caption-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.slot-saved-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 8px var(--glow);
+  animation: slot-dot-in 220ms var(--ease-out) both;
+}
+@keyframes slot-dot-in {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* The asymmetry is deliberate. Dark builds surfaces by adding light, so a card
    greyer than its zone would read as a hole and must be *of* it. Light builds
    them by removing tint, so white paper on a tinted board is the canonical
@@ -752,5 +823,14 @@ textarea {
     to {
       opacity: 1;
     }
+  }
+  /* The picker keeps its fades - they carry "something changed" - and drops
+     the rise and the dot's growth. */
+  .slot-picker,
+  .slot-caption {
+    animation: step-item-reduced 160ms ease both;
+  }
+  .slot-saved-dot {
+    animation: none;
   }
 }
