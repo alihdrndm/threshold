@@ -1,4 +1,3 @@
-import { useLayoutEffect, useRef, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import clsx from "clsx";
@@ -11,6 +10,7 @@ import {
   type Quadrant,
 } from "./quadrants";
 import { TaskCard } from "./TaskCard";
+import { useWidth } from "../useWidth";
 
 function Zone({
   quadrant,
@@ -139,30 +139,6 @@ function AxisLabel({
       {children}
     </span>
   );
-}
-
-/**
- * How wide the board is, in CSS pixels, from the element itself rather than
- * the window - the dashboard has padding and may one day have a sidebar, and
- * the layout should answer to the space it actually has.
- */
-function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
-  const [width, setWidth] = useState(0);
-  // Measured before the first paint, then watched: a board that rendered
-  // narrow for one frame and snapped wide would read as a glitch on every
-  // visit to the tab.
-  useLayoutEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    setWidth(node.getBoundingClientRect().width);
-    const observer = new ResizeObserver(([entry]) => {
-      setWidth(entry.contentRect.width);
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-  return [ref, width];
 }
 
 /**

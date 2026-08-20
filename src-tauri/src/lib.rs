@@ -91,6 +91,7 @@ pub fn run() {
             commands::reschedule_task,
             commands::unschedule_task,
             commands::open_url,
+            commands::calendar_week,
             commands::dismiss_checkin,
         ])
         .setup(|app| {
@@ -100,6 +101,7 @@ pub fn run() {
             // the one thing it must not fail silently at.
             let conn = db::open().map_err(|err| format!("database unavailable: {err}"))?;
             app.manage(db::Db(Mutex::new(conn)));
+            app.manage(calendar::week::WeekCache::default());
 
             startup::sync_autostart(&handle);
 
