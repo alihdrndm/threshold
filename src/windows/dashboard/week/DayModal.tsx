@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import clsx from "clsx";
-import { buildDay, formatDuration, type Interval } from "./week";
+import {
+  buildDay,
+  formatDuration,
+  type Interval,
+  type ScheduledTask,
+} from "./week";
 
 /**
  * One day, expanded: the whole 24 hours at readable scale, and the answer the
@@ -52,7 +57,7 @@ export function DayModal({
   /** Local midnight of the day to expand, unix seconds. */
   dayStart: number;
   busy: Interval[];
-  tasks: { id: number; title: string; scheduledTs: number }[];
+  tasks: ScheduledTask[];
   hours: { startMin: number; endMin: number; days: boolean[] };
   /** The clicked column's rectangle - where the card grows from. */
   from: DOMRect | null;
@@ -276,17 +281,25 @@ export function DayModal({
                     </div>
                   ) : (
                     <div
-                      key={`task-${block.taskId}-${i}`}
+                      key={`${block.kind}-${block.taskId}-${i}`}
                       data-zone="schedule"
-                      className="week-task absolute inset-x-1 rounded-[5px] px-1.5"
+                      className={clsx(
+                        "week-task absolute inset-x-1 rounded-[5px] px-1.5",
+                        block.kind === "echo" && "week-echo",
+                      )}
                       style={{
                         top: `${block.topPct}%`,
                         height: `${block.heightPct}%`,
                       }}
-                      title={`${block.title} · ${range(block)}`}
+                      title={
+                        block.kind === "echo"
+                          ? `${block.title} · repeats here · ${range(block)}`
+                          : `${block.title} · ${range(block)}`
+                      }
                     >
                       <span className="block truncate pt-0.5 text-[10px] text-[var(--zone-ink-muted)]">
                         {block.title}
+                        {block.kind === "echo" ? " ↻" : ""}
                       </span>
                     </div>
                   ),
@@ -361,7 +374,11 @@ export function DayModal({
                               : "text-[var(--color-ink-muted)]",
                           )}
                         >
-                          {block.kind === "task" ? block.title : "Busy"}
+                          {block.kind === "busy"
+                            ? "Busy"
+                            : block.kind === "echo"
+                              ? `${block.title} ↻`
+                              : block.title}
                         </span>
                       </li>
                     ))}

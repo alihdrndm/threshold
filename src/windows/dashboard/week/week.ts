@@ -26,7 +26,10 @@ export interface Axis {
 }
 
 export interface Block {
-  kind: "busy" | "task";
+  /** "echo" is a projected future occurrence of a repeating task: not booked
+      anywhere yet - it becomes real when the previous occurrence completes -
+      but the week should show where the rule will land. */
+  kind: "busy" | "task" | "echo";
   /** Clipped to the day, unix seconds. */
   start: number;
   end: number;
@@ -34,6 +37,15 @@ export interface Block {
   heightPct: number;
   taskId?: number;
   title?: string;
+}
+
+/** What buildWeek/buildDay need to know about a scheduled task. */
+export interface ScheduledTask {
+  id: number;
+  title: string;
+  scheduledTs: number;
+  /** "1,3,5" Mon=1..Sun=7, or null - the repeat mask, for echo projection. */
+  repeatDays?: string | null;
 }
 
 export interface DayColumn {
@@ -208,7 +220,7 @@ export function buildDay(
     busy: Interval[];
     hours: { startMin: number; endMin: number; days: boolean[] };
   },
-  tasks: { id: number; title: string; scheduledTs: number }[],
+  tasks: ScheduledTask[],
   now: number,
 ): DayDetail {
   const axis: Axis = { startMin: 0, endMin: 1440 };
@@ -234,6 +246,19 @@ export function buildDay(
     blocks.push({
       kind: "task",
       ...clipped,
+      ...pos,
+      taskId: task.id,
+      title: task.title,
+    });
+  }
+  for (const task of tasks) {
+    const echo = echoOn(task, dayStart);
+    if (!echo) continue;
+    const pos = place(echo, axis);
+    if (!pos) continue;
+    blocks.push({
+      kind: "echo",
+      ...echo,
       ...pos,
       taskId: task.id,
       title: task.title,
@@ -269,6 +294,41 @@ export function tickLabel(minute: number, day: Date = new Date()): string {
 /** The 30-minute slot every Threshold event occupies (sync.rs's SLOT). */
 export const TASK_SLOT_SECS = 30 * 60;
 
+/** "1,3,5" -> {1,3,5}; anything not 1-7 ignored. Local copy of the repeat
+    vocabulary so this module stays dependency-free and pure. */
+function repeatMask(days: string | null | undefined): Set<number> {
+  const set = new Set<number>();
+  if (!days) return set;
+  for (const piece of days.split(",")) {
+    const n = parseInt(piece.trim(), 10);
+    if (n >= 1 && n <= 7) set.add(n);
+  }
+  return set;
+}
+
+/**
+ * A repeating task's projected occurrence on `dayStart`, or null when the
+ * rule does not land there: only days STRICTLY AFTER the real occurrence
+ * qualify (the task cannot come back before it happens), and the weekday
+ * must be in the mask. Same wall-clock time as the anchor, built through a
+ * Date so a DST day still reads the clock, not elapsed seconds.
+ */
+export function echoOn(
+  task: ScheduledTask,
+  dayStart: number,
+): Interval | null {
+  const mask = repeatMask(task.repeatDays);
+  if (mask.size === 0) return null;
+  const realDay = weekDays(task.scheduledTs, 1)[0];
+  if (dayStart <= realDay) return null;
+  if (!mask.has(mondayIndex(dayStart) + 1)) return null;
+  const anchor = new Date(task.scheduledTs * 1000);
+  const d = new Date(dayStart * 1000);
+  d.setHours(anchor.getHours(), anchor.getMinutes(), 0, 0);
+  const start = Math.floor(d.getTime() / 1000);
+  return { start, end: start + TASK_SLOT_SECS };
+}
+
 /**
  * The whole computation: the axis and seven columns of positioned blocks.
  * `tasks` should already be filtered to open tasks with a scheduled time;
@@ -281,7 +341,7 @@ export function buildWeek(
     busy: Interval[];
     hours: { startMin: number; endMin: number; days: boolean[] };
   },
-  tasks: { id: number; title: string; scheduledTs: number }[],
+  tasks: ScheduledTask[],
   now: number,
 ): { axis: Axis; days: DayColumn[] } {
   const axis = axisRange(data.hours);
@@ -313,6 +373,21 @@ export function buildWeek(
       blocks.push({
         kind: "task",
         ...clipped,
+        ...pos,
+        taskId: task.id,
+        title: task.title,
+      });
+    }
+    // The rule's shadow: where each repeating task will land once its turn
+    // comes. Projected, not booked - drawn last, faintly.
+    for (const task of tasks) {
+      const echo = echoOn(task, dayStart);
+      if (!echo) continue;
+      const pos = place(echo, axis);
+      if (!pos) continue;
+      blocks.push({
+        kind: "echo",
+        ...echo,
         ...pos,
         taskId: task.id,
         title: task.title,

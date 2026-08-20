@@ -112,7 +112,12 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
     () =>
       source
         .filter((t) => t.status === "open" && t.scheduledTs !== null)
-        .map((t) => ({ id: t.id, title: t.title, scheduledTs: t.scheduledTs! })),
+        .map((t) => ({
+          id: t.id,
+          title: t.title,
+          scheduledTs: t.scheduledTs!,
+          repeatDays: t.repeatDays,
+        })),
     [source],
   );
 
@@ -254,11 +259,18 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
                   />
                 ) : (
                   <div
-                    key={`task-${block.taskId}-${i}`}
+                    key={`${block.kind}-${block.taskId}-${i}`}
                     data-zone="schedule"
-                    className="week-block week-task absolute inset-x-0.5 rounded-[5px] px-1"
+                    className={clsx(
+                      "week-block week-task absolute inset-x-0.5 rounded-[5px] px-1",
+                      block.kind === "echo" && "week-echo",
+                    )}
                     style={blockStyle(block.topPct, block.heightPct, i)}
-                    title={`${block.title} · ${clockTime(block.start)} – ${clockTime(block.end)}`}
+                    title={
+                      block.kind === "echo"
+                        ? `${block.title} · repeats here · ${clockTime(block.start)} – ${clockTime(block.end)}`
+                        : `${block.title} · ${clockTime(block.start)} – ${clockTime(block.end)}`
+                    }
                   >
                     <span className="block truncate text-[9px] leading-[14px] text-[var(--zone-ink-muted)]">
                       {block.title}
@@ -305,6 +317,14 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
         <span className="flex items-center gap-1.5">
           <span aria-hidden data-zone="schedule" className="week-key week-task" />{" "}
           your tasks
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            data-zone="schedule"
+            className="week-key week-task week-echo"
+          />{" "}
+          repeats
         </span>
         {emptyWeek && (
           <span className="normal-case tracking-normal">
