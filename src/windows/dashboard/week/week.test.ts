@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   axisRange,
+  buildDay,
   buildWeek,
   clipToDay,
+  formatDuration,
+  freeGaps,
   hourTicks,
   mergeIntervals,
   mondayIndex,
@@ -187,6 +190,115 @@ describe("hourTicks", () => {
 
   it("respects a coarser step", () => {
     expect(hourTicks({ startMin: 420, endMin: 720 }, 120)).toEqual([480, 600, 720]);
+  });
+});
+
+describe("freeGaps", () => {
+  const before = at(2026, 8, 23, 12); // Sunday noon, so Monday is untouched by "now"
+
+  it("finds the gaps between busy blocks inside working hours", () => {
+    const gaps = freeGaps(
+      [
+        { start: at(2026, 8, 24, 10), end: at(2026, 8, 24, 11) },
+        { start: at(2026, 8, 24, 14), end: at(2026, 8, 24, 16) },
+      ],
+      MONDAY,
+      HOURS,
+      before,
+    );
+    expect(gaps).toEqual([
+      { start: at(2026, 8, 24, 9), end: at(2026, 8, 24, 10) },
+      { start: at(2026, 8, 24, 11), end: at(2026, 8, 24, 14) },
+      { start: at(2026, 8, 24, 16), end: at(2026, 8, 24, 18) },
+    ]);
+  });
+
+  it("gives an empty day one gap spanning the whole working window", () => {
+    expect(freeGaps([], MONDAY, HOURS, before)).toEqual([
+      { start: at(2026, 8, 24, 9), end: at(2026, 8, 24, 18) },
+    ]);
+  });
+
+  it("starts today's gaps at now, not at the day's open", () => {
+    const gaps = freeGaps([], MONDAY, HOURS, at(2026, 8, 24, 13, 30));
+    expect(gaps).toEqual([
+      { start: at(2026, 8, 24, 13, 30), end: at(2026, 8, 24, 18) },
+    ]);
+  });
+
+  it("returns nothing on a non-working day or a spent one", () => {
+    const saturday = at(2026, 8, 29);
+    expect(freeGaps([], saturday, HOURS, before)).toEqual([]);
+    expect(freeGaps([], MONDAY, HOURS, at(2026, 8, 24, 19))).toEqual([]);
+  });
+
+  it("drops slivers under fifteen minutes", () => {
+    const gaps = freeGaps(
+      [{ start: at(2026, 8, 24, 9, 10), end: at(2026, 8, 24, 18) }],
+      MONDAY,
+      HOURS,
+      before,
+    );
+    expect(gaps).toEqual([]); // the 9:00-9:10 sliver is noise
+  });
+
+  it("ignores busy outside the working window", () => {
+    const gaps = freeGaps(
+      [{ start: at(2026, 8, 24, 6), end: at(2026, 8, 24, 7) }],
+      MONDAY,
+      HOURS,
+      before,
+    );
+    expect(gaps).toEqual([
+      { start: at(2026, 8, 24, 9), end: at(2026, 8, 24, 18) },
+    ]);
+  });
+});
+
+describe("formatDuration", () => {
+  it("speaks minutes, hours, and both", () => {
+    expect(formatDuration(45 * 60)).toBe("45 min");
+    expect(formatDuration(2 * 3600)).toBe("2 h");
+    expect(formatDuration(90 * 60)).toBe("1 h 30 min");
+  });
+});
+
+describe("buildDay", () => {
+  const data = {
+    busy: [{ start: at(2026, 8, 24, 10), end: at(2026, 8, 24, 11) }],
+    hours: HOURS,
+  };
+
+  it("uses the full day as its axis", () => {
+    const detail = buildDay(MONDAY, data, [], at(2026, 8, 23, 12));
+    const block = detail.blocks[0];
+    expect(block.topPct).toBeCloseTo((600 / 1440) * 100);
+    expect(block.heightPct).toBeCloseTo((60 / 1440) * 100);
+  });
+
+  it("keeps the small-hours block the compact week clips away", () => {
+    const night = {
+      ...data,
+      busy: [{ start: at(2026, 8, 24, 2), end: at(2026, 8, 24, 3) }],
+    };
+    const detail = buildDay(MONDAY, night, [], at(2026, 8, 23, 12));
+    expect(detail.blocks).toHaveLength(1);
+    expect(detail.blocks[0].topPct).toBeCloseTo((120 / 1440) * 100);
+  });
+
+  it("marks now only on the day itself", () => {
+    const noon = at(2026, 8, 24, 12);
+    expect(buildDay(MONDAY, data, [], noon).nowPct).toBeCloseTo(50);
+    expect(buildDay(at(2026, 8, 25), data, [], noon).nowPct).toBeNull();
+  });
+
+  it("carries the day's gaps and its working flag", () => {
+    const detail = buildDay(MONDAY, data, [], at(2026, 8, 23, 12));
+    expect(detail.working).toBe(true);
+    expect(detail.gaps).toHaveLength(2);
+    const saturday = buildDay(at(2026, 8, 29), data, [], at(2026, 8, 23, 12));
+    expect(saturday.working).toBe(false);
+    expect(saturday.gaps).toEqual([]);
   });
 });
 

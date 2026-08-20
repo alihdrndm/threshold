@@ -605,6 +605,57 @@ textarea {
   height: 10px;
   border-radius: 3px;
 }
+/* A day column is a door: the border admits it quietly on hover, and the
+   press acknowledges before the morph begins. */
+.week-day-button {
+  cursor: pointer;
+  transition:
+    border-color 150ms var(--ease-out),
+    transform 160ms var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .week-day-button:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  }
+}
+.week-day-button:active {
+  transform: scale(0.99);
+}
+
+/* The expanded day. The card's travel is scripted per-open in JS (it grows
+   from the clicked column's own rectangle - CSS cannot know where that is);
+   these keyframes carry the rest: the scrim's fade and the content arriving
+   a beat behind the card, so the growth reads before the detail does. */
+.day-scrim {
+  background: rgb(0 0 0 / 0.55);
+  animation: day-scrim-in 200ms var(--ease-out) both;
+}
+@keyframes day-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+.day-scrim[data-leaving] {
+  animation: day-scrim-out 200ms var(--ease-out) both;
+  pointer-events: none;
+}
+@keyframes day-scrim-out {
+  to {
+    opacity: 0;
+  }
+}
+.day-modal {
+  transform-origin: top left;
+  will-change: transform;
+}
+.day-modal-content {
+  animation: day-content-in 180ms var(--ease-out) 90ms both;
+}
+@keyframes day-content-in {
+  from {
+    opacity: 0;
+  }
+}
 
 /* The asymmetry is deliberate. Dark builds surfaces by adding light, so a card
    greyer than its zone would read as a hole and must be *of* it. Light builds
@@ -915,5 +966,12 @@ textarea {
   .week-block {
     animation: step-item-reduced 160ms ease both;
     animation-delay: 0ms;
+  }
+  /* The expanded day keeps its fades; the travel is skipped in JS. */
+  .day-modal-content {
+    animation-delay: 0ms;
+  }
+  .week-day-button:active {
+    transform: none;
   }
 }
