@@ -55,7 +55,10 @@ export function SlotControl({ task }: { task: Task }) {
       <button
         ref={button}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        // Through close(), not a bare toggle: closing from the chip must also
+        // forget which sub-panel was showing, or the next open lands straight
+        // back in the picker or the repeat pills instead of the menu.
+        onClick={() => (open ? close() : setOpen(true))}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Scheduled: ${label}. Change`}
