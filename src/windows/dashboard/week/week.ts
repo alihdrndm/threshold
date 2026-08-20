@@ -146,6 +146,109 @@ export function place(
   };
 }
 
+/**
+ * The free gaps inside one day's working hours - the expanded day's real
+ * answer. Raw room, not scheduler room: buffers are the scheduler's manners,
+ * and the eye judging a day wants the honest spaces. For today the past is
+ * spent, so gaps begin no earlier than `now`; gaps shorter than 15 minutes
+ * are noise and are dropped.
+ */
+export function freeGaps(
+  busy: Interval[],
+  dayStart: number,
+  hours: { startMin: number; endMin: number; days: boolean[] },
+  now: number,
+): Interval[] {
+  if (!hours.days[mondayIndex(dayStart)]) return [];
+  const open = dayStart + hours.startMin * 60;
+  const close = dayStart + hours.endMin * 60;
+  let cursor = Math.max(open, now);
+  if (cursor >= close) return [];
+
+  const gaps: Interval[] = [];
+  for (const iv of mergeIntervals(busy)) {
+    const start = Math.max(iv.start, open);
+    const end = Math.min(iv.end, close);
+    if (end <= start) continue;
+    if (start > cursor) gaps.push({ start: cursor, end: start });
+    cursor = Math.max(cursor, end);
+  }
+  if (cursor < close) gaps.push({ start: cursor, end: close });
+  return gaps.filter((gap) => gap.end - gap.start >= 15 * 60);
+}
+
+/** A duration in seconds as people say it: "45 min", "2 h", "1 h 30 min". */
+export function formatDuration(secs: number): string {
+  const min = Math.round(secs / 60);
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
+}
+
+/** What the expanded day shows: the whole day, nothing clipped. */
+export interface DayDetail {
+  /** Full-day axis (00:00-24:00) blocks, busy first then task overlays. */
+  blocks: Block[];
+  nowPct: number | null;
+  /** Free gaps inside working hours, soonest first. */
+  gaps: Interval[];
+  working: boolean;
+}
+
+/**
+ * One day at full scale for the expanded view. The compact week clips to the
+ * working axis; the point of expanding is honesty, so this axis is the whole
+ * day and nothing is dropped.
+ */
+export function buildDay(
+  dayStart: number,
+  data: {
+    busy: Interval[];
+    hours: { startMin: number; endMin: number; days: boolean[] };
+  },
+  tasks: { id: number; title: string; scheduledTs: number }[],
+  now: number,
+): DayDetail {
+  const axis: Axis = { startMin: 0, endMin: 1440 };
+  const nextDayStart = weekDays(dayStart, 2)[1];
+
+  const blocks: Block[] = [];
+  for (const iv of mergeIntervals(data.busy)) {
+    const clipped = clipToDay(iv, dayStart, nextDayStart);
+    if (!clipped) continue;
+    const pos = place(clipped, axis);
+    if (!pos) continue;
+    blocks.push({ kind: "busy", ...clipped, ...pos });
+  }
+  for (const task of tasks) {
+    const clipped = clipToDay(
+      { start: task.scheduledTs, end: task.scheduledTs + TASK_SLOT_SECS },
+      dayStart,
+      nextDayStart,
+    );
+    if (!clipped) continue;
+    const pos = place(clipped, axis);
+    if (!pos) continue;
+    blocks.push({
+      kind: "task",
+      ...clipped,
+      ...pos,
+      taskId: task.id,
+      title: task.title,
+    });
+  }
+
+  const isToday = now >= dayStart && now < nextDayStart;
+  return {
+    blocks,
+    nowPct: isToday ? (minuteOf(now) / 1440) * 100 : null,
+    gaps: freeGaps(data.busy, dayStart, data.hours, now),
+    working: data.hours.days[mondayIndex(dayStart)] ?? false,
+  };
+}
+
 /** The tick marks for the hour axis, minutes past midnight. */
 export function hourTicks(axis: Axis, stepMin = 60): number[] {
   const ticks: number[] = [];

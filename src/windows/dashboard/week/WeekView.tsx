@@ -9,6 +9,7 @@ import {
   type Task,
 } from "@/lib/tauri";
 import { useWidth } from "../useWidth";
+import { DayModal } from "./DayModal";
 import { buildWeek, hourTicks, tickLabel, type Axis } from "./week";
 
 /**
@@ -55,6 +56,11 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const lastFocus = useRef(0);
   const [ref, width] = useWidth<HTMLElement>();
+  // A day mid-expansion: which one, and the rectangle it grows from.
+  const [expanded, setExpanded] = useState<{
+    dayStart: number;
+    rect: DOMRect;
+  } | null>(null);
 
   const needOwnTasks = tasks === undefined;
 
@@ -110,17 +116,22 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
     [source],
   );
 
+  const busyIntervals = useMemo(
+    () => (data?.busy ?? []).map((b) => ({ start: b.startTs, end: b.endTs })),
+    [data],
+  );
+
   const week = useMemo(() => {
     return buildWeek(
       {
         startTs: data?.startTs ?? todayMidnight(),
-        busy: (data?.busy ?? []).map((b) => ({ start: b.startTs, end: b.endTs })),
+        busy: busyIntervals,
         hours: data?.hours ?? DEFAULT_HOURS,
       },
       scheduled,
       now,
     );
-  }, [data, scheduled, now]);
+  }, [data, busyIntervals, scheduled, now]);
 
   if (connected === false) {
     return (
@@ -191,12 +202,22 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
             ))}
           </div>
 
-          {/* Seven columns of the week itself. */}
+          {/* Seven columns of the week itself. Each is a door: clicking it
+              expands that day to full scale, growing from this very box. */}
           {week.days.map((day) => (
-            <div
+            <button
               key={day.dayStart}
+              type="button"
+              onClick={(event) =>
+                setExpanded({
+                  dayStart: day.dayStart,
+                  rect: event.currentTarget.getBoundingClientRect(),
+                })
+              }
+              aria-label={`Expand ${new Date(day.dayStart * 1000).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}`}
+              aria-haspopup="dialog"
               className={clsx(
-                "week-day relative h-52 overflow-hidden rounded-lg",
+                "week-day week-day-button relative h-52 overflow-hidden rounded-lg text-left",
                 !day.working && "week-day-off",
               )}
             >
@@ -252,10 +273,29 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
                   style={{ top: `${day.nowPct}%` }}
                 />
               )}
-            </div>
+            </button>
           ))}
         </div>
       </div>
+
+      {expanded && (
+        <DayModal
+          // Keyed by day so switching days remounts with fresh closing state,
+          // and a straggling close from the old day cannot take the new one.
+          key={expanded.dayStart}
+          dayStart={expanded.dayStart}
+          busy={busyIntervals}
+          tasks={scheduled}
+          hours={hours}
+          from={expanded.rect}
+          onClose={() => {
+            const own = expanded.dayStart;
+            setExpanded((current) =>
+              current?.dayStart === own ? null : current,
+            );
+          }}
+        />
+      )}
 
       {/* The key, and the good news when there is nothing to draw. */}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[10px] tracking-[0.14em] uppercase text-[var(--color-ink-muted)]">
