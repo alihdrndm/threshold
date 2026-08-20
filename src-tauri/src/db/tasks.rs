@@ -1,8 +1,10 @@
 //! The refined to-do list (spec F6).
 //!
-//! A short list, not a project manager. There are no due dates, no recurrence,
-//! no subtasks and no tags on purpose: the interceptor is the product, and a
-//! task feature that grows teeth starts competing with it for attention.
+//! A short list, not a project manager. There are no due dates, no subtasks
+//! and no tags on purpose: the interceptor is the product, and a task feature
+//! that grows teeth starts competing with it for attention. The one recurrence
+//! the list allows is Schedule's own (`repeat_days`, below): a weekly slot is
+//! a place a task returns to, not a deadline that chases it.
 //!
 //! Position on the Eisenhower matrix is stored as two flags rather than a
 //! quadrant name, so "unclassified" has an honest representation - both NULL,
@@ -46,6 +48,10 @@ pub struct Task {
     pub scheduled_ts: Option<i64>,
     pub calendar_event_id: Option<String>,
     pub calendar_html_link: Option<String>,
+    /// Days this Schedule task repeats on: "1,3,5" = Mon, Wed, Fri (Mon=1..
+    /// Sun=7, the work_days vocabulary). NULL = no repeat. Cleared when the
+    /// task leaves the quadrant - the rule is Schedule's, not the task's.
+    pub repeat_days: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -71,12 +77,13 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         scheduled_ts: row.get(10)?,
         calendar_event_id: row.get(11)?,
         calendar_html_link: row.get(12)?,
+        repeat_days: row.get(13)?,
     })
 }
 
 const SELECT: &str = "SELECT id, title, note, context_id, urgent, important, sort_order, status,
                              created_ts, completed_ts, scheduled_ts, calendar_event_id,
-                             calendar_html_link FROM tasks";
+                             calendar_html_link, repeat_days FROM tasks";
 
 pub fn contexts(conn: &Connection) -> Result<Vec<Context>, String> {
     let mut stmt = conn
@@ -250,6 +257,11 @@ pub fn reorder(conn: &Connection, ids: &[i64]) -> Result<(), String> {
 }
 
 /// Move a task to a quadrant. `None`/`None` returns it to the Inbox.
+///
+/// Leaving Schedule takes the repeat with it: the rule belongs to the
+/// quadrant, and a task dragged to Do First should not quietly come back next
+/// Tuesday. The CASE keeps it only when the destination IS Schedule (NULL
+/// flags fall through to ELSE, so the Inbox clears too).
 pub fn set_quadrant(
     conn: &Connection,
     id: i64,
@@ -258,7 +270,9 @@ pub fn set_quadrant(
     sort_order: i64,
 ) -> Result<(), String> {
     conn.execute(
-        "UPDATE tasks SET urgent = ?1, important = ?2, sort_order = ?3 WHERE id = ?4",
+        "UPDATE tasks SET urgent = ?1, important = ?2, sort_order = ?3,
+                repeat_days = CASE WHEN ?1 = 0 AND ?2 = 1 THEN repeat_days ELSE NULL END
+         WHERE id = ?4",
         rusqlite::params![
             urgent.map(|v| v as i64),
             important.map(|v| v as i64),
@@ -285,6 +299,7 @@ pub fn append_to_quadrant(
     let changed = conn
         .execute(
             "UPDATE tasks SET urgent = ?1, important = ?2,
+                    repeat_days = CASE WHEN ?1 = 0 AND ?2 = 1 THEN repeat_days ELSE NULL END,
                     sort_order = (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM tasks
                                    WHERE status = 'open' AND urgent IS ?1 AND important IS ?2
                                      AND id != ?3)
@@ -332,6 +347,10 @@ pub fn by_id(conn: &Connection, id: i64) -> Result<Option<Task>, String> {
 }
 
 /// Record the slot a task holds and the event that holds it.
+///
+/// A `None` link KEEPS the stored one (COALESCE): `reschedule` and the poll's
+/// moved-branch have no link to give - patch does not return htmlLink - and
+/// must not erase the one we have. Erasing is `clear_schedule`'s job.
 pub fn set_schedule(
     conn: &Connection,
     id: i64,
@@ -340,7 +359,8 @@ pub fn set_schedule(
     html_link: Option<&str>,
 ) -> Result<(), String> {
     conn.execute(
-        "UPDATE tasks SET scheduled_ts = ?1, calendar_event_id = ?2, calendar_html_link = ?3
+        "UPDATE tasks SET scheduled_ts = ?1, calendar_event_id = ?2,
+                calendar_html_link = COALESCE(?3, calendar_html_link)
          WHERE id = ?4",
         rusqlite::params![scheduled_ts, event_id, html_link, id],
     )
@@ -348,9 +368,32 @@ pub fn set_schedule(
     .map_err(|err| format!("could not record the slot: {err}"))
 }
 
-/// Forget the slot and the event. The task itself is untouched.
+/// Forget the slot, the event and its link. The task itself - including any
+/// repeat rule - is untouched: losing an occurrence is not losing the habit.
 pub fn clear_schedule(conn: &Connection, id: i64) -> Result<(), String> {
-    set_schedule(conn, id, None, None, None)
+    conn.execute(
+        "UPDATE tasks SET scheduled_ts = NULL, calendar_event_id = NULL,
+                calendar_html_link = NULL
+         WHERE id = ?1",
+        [id],
+    )
+    .map(|_| ())
+    .map_err(|err| format!("could not clear the slot: {err}"))
+}
+
+/// Set or clear how a task repeats. Validation is the command's job; this
+/// records exactly what it is given.
+pub fn set_repeat_days(conn: &Connection, id: i64, days: Option<&str>) -> Result<(), String> {
+    let changed = conn
+        .execute(
+            "UPDATE tasks SET repeat_days = ?1 WHERE id = ?2",
+            rusqlite::params![days, id],
+        )
+        .map_err(|err| format!("could not set the repeat: {err}"))?;
+    if changed == 0 {
+        return Err(format!("no task with id {id}"));
+    }
+    Ok(())
 }
 
 pub fn set_status(conn: &Connection, id: i64, status: &str) -> Result<(), String> {
@@ -488,6 +531,83 @@ mod tests {
     fn a_blank_title_is_refused() {
         let conn = memory_db();
         assert!(add(&conn, &new("   ")).is_err());
+    }
+
+    #[test]
+    fn a_slot_move_keeps_the_calendar_link() {
+        let conn = memory_db();
+        let id = add(&conn, &new("weekly review")).unwrap();
+        set_schedule(&conn, id, Some(1_000), Some("evt"), Some("https://x")).unwrap();
+        // A move with no link to give (patch returns none) keeps the stored one.
+        set_schedule(&conn, id, Some(2_000), Some("evt"), None).unwrap();
+        let task = by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(task.scheduled_ts, Some(2_000));
+        assert_eq!(task.calendar_html_link.as_deref(), Some("https://x"));
+        // Clearing forgets all three.
+        clear_schedule(&conn, id).unwrap();
+        let task = by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(task.scheduled_ts, None);
+        assert_eq!(task.calendar_event_id, None);
+        assert_eq!(task.calendar_html_link, None);
+    }
+
+    #[test]
+    fn repeat_days_are_set_and_cleared() {
+        let conn = memory_db();
+        let id = add(&conn, &new("morning pages")).unwrap();
+        set_repeat_days(&conn, id, Some("1,3,5")).unwrap();
+        assert_eq!(
+            by_id(&conn, id).unwrap().unwrap().repeat_days.as_deref(),
+            Some("1,3,5")
+        );
+        set_repeat_days(&conn, id, None).unwrap();
+        assert_eq!(by_id(&conn, id).unwrap().unwrap().repeat_days, None);
+        assert!(set_repeat_days(&conn, 999, Some("1")).is_err());
+    }
+
+    #[test]
+    fn leaving_schedule_clears_the_repeat() {
+        let conn = memory_db();
+        let id = add(&conn, &new("weekly review")).unwrap();
+        set_quadrant(&conn, id, Some(false), Some(true), 0).unwrap();
+        set_repeat_days(&conn, id, Some("2")).unwrap();
+        // Dragged to Do First: the rule stays behind.
+        set_quadrant(&conn, id, Some(true), Some(true), 0).unwrap();
+        assert_eq!(by_id(&conn, id).unwrap().unwrap().repeat_days, None);
+        // And via the appending mover, to the Inbox.
+        set_repeat_days(&conn, id, Some("2")).unwrap();
+        append_to_quadrant(&conn, id, None, None).unwrap();
+        assert_eq!(by_id(&conn, id).unwrap().unwrap().repeat_days, None);
+    }
+
+    #[test]
+    fn moving_within_schedule_keeps_the_repeat() {
+        let conn = memory_db();
+        let id = add(&conn, &new("weekly review")).unwrap();
+        set_quadrant(&conn, id, Some(false), Some(true), 0).unwrap();
+        set_repeat_days(&conn, id, Some("1,2,3,4,5,6,7")).unwrap();
+        // A reorder inside the quadrant is still a set_quadrant call.
+        set_quadrant(&conn, id, Some(false), Some(true), 4).unwrap();
+        assert_eq!(
+            by_id(&conn, id).unwrap().unwrap().repeat_days.as_deref(),
+            Some("1,2,3,4,5,6,7")
+        );
+        append_to_quadrant(&conn, id, Some(false), Some(true)).unwrap();
+        assert!(by_id(&conn, id).unwrap().unwrap().repeat_days.is_some());
+    }
+
+    #[test]
+    fn a_deleted_task_keeps_its_repeat_for_undo() {
+        let conn = memory_db();
+        let id = add(&conn, &new("weekly review")).unwrap();
+        set_quadrant(&conn, id, Some(false), Some(true), 0).unwrap();
+        set_repeat_days(&conn, id, Some("4")).unwrap();
+        set_status(&conn, id, "deleted").unwrap();
+        assert_eq!(
+            by_id(&conn, id).unwrap().unwrap().repeat_days.as_deref(),
+            Some("4"),
+            "undo restores the habit intact"
+        );
     }
 
     #[test]

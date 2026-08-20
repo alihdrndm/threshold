@@ -64,6 +64,7 @@ pub fn run() {
             commands::move_task,
             commands::reorder_tasks,
             commands::set_task_status,
+            commands::set_task_repeat,
             commands::focus_on_task,
             commands::pause_status,
             commands::pause_for,

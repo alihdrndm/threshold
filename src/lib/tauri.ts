@@ -221,6 +221,8 @@ export interface Task {
   scheduledTs: number | null;
   calendarEventId: string | null;
   calendarHtmlLink: string | null;
+  /** Days this Schedule task repeats on ("1,3,5", Mon=1..Sun=7); null = no repeat. */
+  repeatDays: string | null;
 }
 
 export function listContexts(): Promise<TaskContext[]> {
@@ -291,6 +293,11 @@ export function unscheduleTask(taskId: number): Promise<void> {
   return invoke<void>("unschedule_task", { taskId });
 }
 
+/** Set or clear a Schedule task's repeat ("1,3,5", Mon=1..Sun=7; null = off). */
+export function setTaskRepeat(id: number, days: string | null): Promise<void> {
+  return invoke<void>("set_task_repeat", { id, days });
+}
+
 export interface CalendarStatus {
   connected: boolean;
   lastSyncTs: number | null;
@@ -348,8 +355,14 @@ export function calendarWeek(): Promise<CalendarWeek> {
   return invoke<CalendarWeek>("calendar_week");
 }
 
-export function setTaskStatus(id: number, status: string): Promise<void> {
-  return invoke<void>("set_task_status", { id, status });
+/** What a status change came to: `advancedTo` is set when a repeating task
+ *  was "completed" - it stayed open and moved to that slot instead. */
+export interface StatusOutcome {
+  advancedTo: number | null;
+}
+
+export function setTaskStatus(id: number, status: string): Promise<StatusOutcome> {
+  return invoke<StatusOutcome>("set_task_status", { id, status });
 }
 
 export interface FocusResult {

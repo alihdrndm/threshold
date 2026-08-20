@@ -20,8 +20,9 @@ fn parse_hhmm(raw: Option<String>, default_min: u32) -> u32 {
     .unwrap_or(default_min)
 }
 
-/// "1,2,3,4,5" (Mon=1 .. Sun=7) -> a Monday-first mask.
-fn parse_days(raw: Option<String>) -> [bool; 7] {
+/// "1,2,3,4,5" (Mon=1 .. Sun=7) -> a Monday-first mask. Shared with `repeat`,
+/// which stores a task's days in the same vocabulary.
+pub(crate) fn parse_days(raw: Option<String>) -> [bool; 7] {
     match raw {
         None => [true, true, true, true, true, false, false],
         Some(s) => {

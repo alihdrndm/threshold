@@ -19,10 +19,17 @@ const DAY = 86_400_000;
 
 /**
  * The card label for a slot. `scheduledTs` is unix seconds, or null when the
- * task is in Schedule but has no event yet.
+ * task is in Schedule but has no event yet. `repeating` appends the ↻ that
+ * says "this one comes back" - even to "no date yet", where it is the only
+ * sign the rule exists.
  */
-export function formatSlot(scheduledTs: number | null, now: Date): string {
-  if (scheduledTs === null) return "no date yet";
+export function formatSlot(
+  scheduledTs: number | null,
+  now: Date,
+  repeating = false,
+): string {
+  const mark = repeating ? " ↻" : "";
+  if (scheduledTs === null) return `no date yet${mark}`;
   const when = new Date(scheduledTs * 1000);
   const time = when.toLocaleTimeString(undefined, {
     hour: "numeric",
@@ -30,13 +37,13 @@ export function formatSlot(scheduledTs: number | null, now: Date): string {
   });
   const days = Math.round((dayStart(when.getTime()) - dayStart(now.getTime())) / DAY);
 
-  if (days === 0) return `Today ${time}`;
-  if (days === 1) return `Tomorrow ${time}`;
+  if (days === 0) return `Today ${time}${mark}`;
+  if (days === 1) return `Tomorrow ${time}${mark}`;
   // Within the coming week, a weekday is clearer than a date.
   if (days > 1 && days < 7) {
-    return `${when.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+    return `${when.toLocaleDateString(undefined, { weekday: "short" })} ${time}${mark}`;
   }
-  return `${when.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}`;
+  return `${when.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}${mark}`;
 }
 
 /**

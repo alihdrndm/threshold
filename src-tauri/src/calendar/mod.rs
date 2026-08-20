@@ -14,6 +14,7 @@
 
 pub mod api;
 pub mod oauth;
+pub mod repeat;
 pub mod settings;
 pub mod slot;
 pub mod sync;

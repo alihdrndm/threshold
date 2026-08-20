@@ -7,8 +7,10 @@ import {
   useState,
 } from "react";
 import type { Task } from "@/lib/tauri";
+import clsx from "clsx";
 import { Popover } from "./Popover";
 import { formatSlot, fromLocalInput, toLocalInput } from "./slot";
+import { DAY_LABELS, formatRepeat, parseRepeat, serializeRepeat } from "./repeat";
 
 /**
  * The calendar's reach onto a card, without threading commands through five
@@ -21,6 +23,7 @@ export const CalendarContext = createContext<{
   reschedule: (task: Task, startTs: number | null) => void;
   remove: (task: Task) => void;
   open: (url: string) => void;
+  setRepeat: (task: Task, days: string | null) => void;
 } | null>(null);
 
 /**
@@ -33,15 +36,19 @@ export function SlotControl({ task }: { task: Task }) {
   const cal = useContext(CalendarContext);
   const [open, setOpen] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [repeating, setRepeating] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const close = useCallback(() => {
     setOpen(false);
     setPicking(false);
+    setRepeating(false);
   }, []);
 
   if (!cal) return null;
 
-  const label = cal.connected ? formatSlot(task.scheduledTs, new Date()) : "connect calendar";
+  const label = cal.connected
+    ? formatSlot(task.scheduledTs, new Date(), task.repeatDays !== null)
+    : "connect calendar";
 
   return (
     <>
@@ -69,6 +76,11 @@ export function SlotControl({ task }: { task: Task }) {
               onCommit={(ts) => cal.reschedule(task, ts)}
               onDone={close}
             />
+          ) : repeating ? (
+            <RepeatPanel
+              initial={task.repeatDays}
+              onCommit={(days) => cal.setRepeat(task, days)}
+            />
           ) : (
             <>
               <Item
@@ -80,6 +92,11 @@ export function SlotControl({ task }: { task: Task }) {
                 Move to next free slot
               </Item>
               <Item onPress={() => setPicking(true)}>Pick a time…</Item>
+              <Item onPress={() => setRepeating(true)}>
+                {task.repeatDays
+                  ? `Repeats ${formatRepeat(task.repeatDays)}…`
+                  : "Repeat…"}
+              </Item>
               {task.calendarHtmlLink && (
                 <Item
                   onPress={() => {
@@ -198,6 +215,104 @@ function PickTime({
           </>
         ) : (
           "Saves as you pick"
+        )}
+      </p>
+    </li>
+  );
+}
+
+/**
+ * The "repeat" panel: seven day pills, an every-day shortcut, and off.
+ *
+ * No debounce, unlike PickTime: a pill click is a complete pick - there is no
+ * half-typed state to wait out - so every change commits at once. The caption
+ * confirms in the rule's own words, which are also the menu item's words, so
+ * the panel teaches the label it collapses back into.
+ */
+function RepeatPanel({
+  initial,
+  onCommit,
+}: {
+  initial: string | null;
+  onCommit: (days: string | null) => void;
+}) {
+  const [days, setDays] = useState<Set<number>>(() => parseRepeat(initial));
+  const [saved, setSaved] = useState(false);
+
+  const commit = (next: Set<number>) => {
+    setDays(next);
+    setSaved(true);
+    onCommit(serializeRepeat(next));
+  };
+  const toggle = (day: number) => {
+    const next = new Set(days);
+    if (next.has(day)) next.delete(day);
+    else next.add(day);
+    commit(next);
+  };
+  const everyDay = days.size === 7;
+
+  return (
+    <li role="none" className="slot-picker flex w-56 flex-col gap-1.5 p-1">
+      <span className="px-0.5 text-[10px] tracking-[0.14em] text-[var(--color-ink-muted)] uppercase">
+        Repeats on
+      </span>
+      <div className="flex flex-wrap gap-1">
+        {DAY_LABELS.map((name, i) => {
+          const on = days.has(i + 1);
+          return (
+            <button
+              key={name}
+              type="button"
+              aria-pressed={on}
+              onClick={() => toggle(i + 1)}
+              className={clsx(
+                "ritual-pressable rounded-full border px-2 py-1 text-[11px] transition-colors duration-100",
+                on
+                  ? "border-[var(--color-accent)] text-[var(--color-ink)]"
+                  : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
+              )}
+            >
+              {name}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex gap-1">
+        <button
+          type="button"
+          aria-pressed={everyDay}
+          onClick={() => commit(everyDay ? new Set() : new Set([1, 2, 3, 4, 5, 6, 7]))}
+          className={clsx(
+            "ritual-pressable rounded-full border px-2.5 py-1 text-[11px] transition-colors duration-100",
+            everyDay
+              ? "border-[var(--color-accent)] text-[var(--color-ink)]"
+              : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
+          )}
+        >
+          Every day
+        </button>
+        <button
+          type="button"
+          onClick={() => commit(new Set())}
+          className="ritual-pressable rounded-full border border-[var(--color-border-subtle)] px-2.5 py-1 text-[11px] text-[var(--color-ink-muted)] transition-colors duration-100 hover:text-[var(--color-ink)]"
+        >
+          Off
+        </button>
+      </div>
+      <p
+        key={saved ? `saved-${serializeRepeat(days) ?? "off"}` : "hint"}
+        aria-live="polite"
+        className="slot-caption flex min-h-4 items-center gap-1.5 px-0.5 text-[11px] text-[var(--color-ink-muted)]"
+      >
+        {saved ? (
+          <>
+            <span className="slot-saved-dot shrink-0" aria-hidden />
+            Saved ·{" "}
+            {days.size === 0 ? "Off" : formatRepeat(serializeRepeat(days)!)}
+          </>
+        ) : (
+          "Done brings it back on these days"
         )}
       </p>
     </li>
