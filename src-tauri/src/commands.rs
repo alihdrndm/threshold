@@ -929,6 +929,15 @@ pub fn open_url(url: String) {
     crate::calendar::oauth::open_url(&url);
 }
 
+/// The coming week's busy intervals and working hours, for the Week panel.
+/// Async because it may go to Google; a ~120 s cache absorbs panel toggles.
+#[tauri::command(async)]
+pub fn calendar_week(
+    app: tauri::AppHandle,
+) -> Result<crate::calendar::week::CalendarWeek, String> {
+    crate::calendar::week::fetch(&app)
+}
+
 /// The wall, sent away early by a click. It would have left on its own; this
 /// only shortens the wait, and records nothing - a wall you can wave off is
 /// one you will not learn to resent.

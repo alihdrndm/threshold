@@ -21,6 +21,7 @@ import {
   addContext,
   addTask,
   focusOnTask,
+  getSettings,
   listContexts,
   listTasks,
   moveTask,
@@ -31,6 +32,7 @@ import {
   openUrl,
   rescheduleTask,
   reorderTasks,
+  setSetting,
   setTaskContext,
   setTaskStatus,
   unscheduleTask,
@@ -43,6 +45,7 @@ import { CalendarContext } from "./SlotControl";
 import { Popover } from "./Popover";
 import { parseTitle, suggestAreas, tagAtCaret } from "./areas";
 import { DoneToday, MatrixView } from "./MatrixView";
+import { WeekView } from "../week/WeekView";
 import { TaskCard } from "./TaskCard";
 import {
   PLACE_ORDER,
@@ -84,6 +87,8 @@ export function TasksView({
   const [lit, setLit] = useState(0);
   const [newArea, setNewArea] = useState<string | null>(null);
   const [calConnected, setCalConnected] = useState(false);
+  // The week panel's disclosure, remembered across sessions like any setting.
+  const [weekOpen, setWeekOpen] = useState(false);
   const closeCompletions = useCallback(() => setCaret(0), []);
   // The menu on an area chip (rename / remove), and a chip mid-rename.
   const [chipMenu, setChipMenu] = useState<{
@@ -121,6 +126,12 @@ export function TasksView({
 
   useEffect(() => {
     void refresh();
+    getSettings()
+      .then((pairs) => {
+        const open = pairs.find(([key]) => key === "week_open");
+        if (open?.[1] === "1") setWeekOpen(true);
+      })
+      .catch(() => {});
     calendarStatus()
       .then((s) => setCalConnected(s.connected))
       .catch(() => setCalConnected(false));
@@ -441,6 +452,25 @@ export function TasksView({
       >
       <header className="flex flex-wrap items-center gap-3">
         <Segmented value={view} onChange={setView} />
+        {/* The week's free/busy, folded away until asked for. Its open state
+            is a setting: a planning habit, not a per-visit choice. */}
+        <button
+          type="button"
+          aria-expanded={weekOpen}
+          onClick={() => {
+            const open = !weekOpen;
+            setWeekOpen(open);
+            setSetting("week_open", open ? "1" : "0").catch(() => {});
+          }}
+          className={clsx(
+            "rounded-full border border-[var(--color-border-subtle)] px-4 py-1.5 text-sm transition-colors duration-150",
+            weekOpen
+              ? "bg-[var(--color-fill-selected)] text-[var(--color-ink)]"
+              : "text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
+          )}
+        >
+          Week
+        </button>
         {/* The areas. Each chip filters when clicked and takes a card when
             one is dropped on it: the same word - Job - is both the lens and
             the label, so there is one thing to learn. */}
@@ -693,6 +723,8 @@ export function TasksView({
           </button>
         </div>
       )}
+
+        {weekOpen && query === "" && <WeekView tasks={tasks} />}
 
         <div className="min-h-0 flex-1 overflow-auto">
           {query !== "" ? (

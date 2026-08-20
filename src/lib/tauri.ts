@@ -320,6 +320,34 @@ export function openUrl(url: string): Promise<void> {
   return invoke<void>("open_url", { url });
 }
 
+/** One opaque busy interval from Google, unix seconds. */
+export interface WeekBusy {
+  startTs: number;
+  endTs: number;
+}
+
+/** Working hours as the Week panel needs them. `days` is Monday-first. */
+export interface WeekHours {
+  startMin: number;
+  endMin: number;
+  days: boolean[];
+  bufferMin: number;
+}
+
+/** The coming week: busy intervals plus working hours, one round-trip. */
+export interface CalendarWeek {
+  startTs: number;
+  endTs: number;
+  busy: WeekBusy[];
+  hours: WeekHours;
+  fetchedTs: number;
+}
+
+/** The rolling 7-day free/busy window. Backend-cached ~120 s. */
+export function calendarWeek(): Promise<CalendarWeek> {
+  return invoke<CalendarWeek>("calendar_week");
+}
+
 export function setTaskStatus(id: number, status: string): Promise<void> {
   return invoke<void>("set_task_status", { id, status });
 }

@@ -62,8 +62,9 @@ fn ceil_quarter(t: DateTime<Local>) -> DateTime<Local> {
     whole + Duration::minutes((15 - rem) as i64)
 }
 
-/// Local midnight starting the given day.
-fn day_start(t: DateTime<Local>) -> DateTime<Local> {
+/// Local midnight starting the given day. Shared with `week`, which anchors
+/// the dashboard's free/busy window to the same midnight this module uses.
+pub(crate) fn day_start(t: DateTime<Local>) -> DateTime<Local> {
     Local
         .with_ymd_and_hms(t.year(), t.month(), t.day(), 0, 0, 0)
         .single()

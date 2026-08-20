@@ -530,6 +530,82 @@ textarea {
   }
 }
 
+/* The week panel - the coming seven days as free and busy space. Busy is
+   ink at low opacity: present in both appearances without naming a colour of
+   its own. A task block wears the Schedule zone's fill (data-zone resolves
+   --zone-fill) with an accent edge, so "yours" reads the same here as it does
+   on the board. Blocks enter with a small stagger - the week assembling -
+   capped so a full calendar never feels slower than an empty one. */
+.week-panel {
+  animation: week-in 160ms var(--ease-out) both;
+}
+@keyframes week-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.week-day {
+  border: 1px solid var(--color-border-subtle);
+  background-color: var(--color-surface-raised);
+}
+.week-day-off {
+  background-color: var(--color-fill-subtle);
+}
+.week-off {
+  background-color: var(--color-fill-subtle);
+}
+.week-line {
+  border-top: 1px solid var(--color-border-subtle);
+  opacity: 0.5;
+}
+.week-block {
+  transform-origin: top;
+  animation: week-block-in 200ms var(--ease-out) both;
+  animation-delay: min(calc(var(--i, 0) * 12ms), 120ms);
+}
+@keyframes week-block-in {
+  from {
+    opacity: 0;
+    transform: scaleY(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.week-busy {
+  background-color: color-mix(in srgb, var(--color-ink) 16%, transparent);
+}
+.week-task {
+  background-color: var(--zone-fill);
+  border-left: 2px solid var(--color-accent);
+}
+.week-now {
+  border-top: 2px solid var(--color-accent);
+}
+.week-now::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: -3.5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 6px var(--glow);
+}
+.week-key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
 /* The asymmetry is deliberate. Dark builds surfaces by adding light, so a card
    greyer than its zone would read as a hole and must be *of* it. Light builds
    them by removing tint, so white paper on a tinted board is the canonical
@@ -832,5 +908,12 @@ textarea {
   }
   .slot-saved-dot {
     animation: none;
+  }
+  /* The week keeps its fade and drops the assembly: panel and blocks arrive
+     together, quietly. */
+  .week-panel,
+  .week-block {
+    animation: step-item-reduced 160ms ease both;
+    animation-delay: 0ms;
   }
 }

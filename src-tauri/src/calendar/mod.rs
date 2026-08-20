@@ -18,6 +18,7 @@ pub mod settings;
 pub mod slot;
 pub mod sync;
 pub mod token;
+pub mod week;
 
 use tauri::AppHandle;
 

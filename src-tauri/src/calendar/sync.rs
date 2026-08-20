@@ -103,6 +103,7 @@ fn schedule_now(app: &AppHandle, task_id: i64) -> Result<(), String> {
         )?;
     }
     set_status(app, "Synced");
+    super::week::invalidate(app);
     let _ = app.emit("tasks-changed", ());
     Ok(())
 }
@@ -128,6 +129,7 @@ pub fn on_task_left_schedule(app: AppHandle, task_id: i64) {
             if let Err(err) = client.delete_event(&event_id) {
                 report(&app, &err);
             } else {
+                super::week::invalidate(&app);
                 let _ = app.emit("tasks-changed", ());
             }
         }
@@ -193,6 +195,7 @@ pub fn reschedule(app: &AppHandle, task_id: i64, start: Option<i64>) -> Result<i
         )?;
         // patch does not return htmlLink; keep the existing one.
     }
+    super::week::invalidate(app);
     let _ = app.emit("tasks-changed", ());
     Ok(start_local.timestamp())
 }
@@ -210,6 +213,7 @@ pub fn remove_from_calendar(app: &AppHandle, task_id: i64) -> Result<(), String>
         if connected(app) {
             let client = Client::authed(app)?;
             client.delete_event(&id)?;
+            super::week::invalidate(app);
         }
     }
     let _ = app.emit("tasks-changed", ());
@@ -281,6 +285,7 @@ pub fn poll_once(app: &AppHandle) -> Result<String, String> {
     super::api::save_sync_token(app, next.as_deref());
     set_status(app, "Synced");
     if changed {
+        super::week::invalidate(app);
         let _ = app.emit("tasks-changed", ());
     }
     Ok("Synced".into())
