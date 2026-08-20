@@ -21,6 +21,11 @@ const OPEN_MS = 280;
 const CLOSE_MS = 200;
 const EASE = "cubic-bezier(0.23, 1, 0.32, 1)";
 
+/** One hour of the day, in pixels. Tall enough that a half-hour block can
+    carry its own time label; the whole day is 24 of these and scrolls. */
+const HOUR_PX = 48;
+const DAY_PX = 24 * HOUR_PX;
+
 function reducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
@@ -56,6 +61,7 @@ export function DayModal({
   const card = useRef<HTMLDivElement>(null);
   const scrim = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
   const [leaving, setLeaving] = useState(false);
   const now = Math.floor(Date.now() / 1000);
 
@@ -125,6 +131,20 @@ export function DayModal({
     return () => document.removeEventListener("keydown", key);
   }, [close]);
 
+  // Land the scroll where the day actually happens: on the now line for
+  // today, at the working day's open otherwise - never at midnight.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const target =
+      detail.nowPct !== null
+        ? (detail.nowPct / 100) * DAY_PX - el.clientHeight / 3
+        : (hours.startMin / 1440) * DAY_PX - HOUR_PX / 2;
+    el.scrollTop = Math.max(0, target);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // The list dedupes what the timeline overlays: a busy interval that is
   // exactly a task's slot is the task, not a second booking.
   const taskStarts = new Set(tasks.map((t) => t.scheduledTs));
@@ -136,7 +156,8 @@ export function DayModal({
     )
     .sort((a, b) => a.start - b.start);
 
-  const ticks = [0, 180, 360, 540, 720, 900, 1080, 1260, 1440];
+  // Every hour named: the expansion's promise is explicitness.
+  const ticks = Array.from({ length: 24 }, (_, i) => i * 60);
 
   return createPortal(
     <div
@@ -156,7 +177,7 @@ export function DayModal({
           month: "long",
           day: "numeric",
         })}
-        className="day-modal flex h-[min(40rem,88vh)] w-[min(34rem,92vw)] flex-col overflow-hidden rounded-2xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-raised)] shadow-[0_24px_64px_-16px_rgb(0_0_0/0.6)]"
+        className="day-modal flex h-[min(52rem,92vh)] w-[min(56rem,94vw)] flex-col overflow-hidden rounded-2xl border border-[var(--color-border-subtle)] bg-[var(--color-surface-raised)] shadow-[0_24px_64px_-16px_rgb(0_0_0/0.6)]"
       >
         <div className="day-modal-content flex min-h-0 flex-1 flex-col">
           <header className="flex items-baseline gap-3 px-5 pt-4 pb-3">
@@ -182,22 +203,29 @@ export function DayModal({
             </button>
           </header>
 
-          <div className="flex min-h-0 flex-1 gap-4 px-5 pb-5">
-            {/* The whole day, nothing clipped. */}
-            <div className="flex min-w-0 flex-[2] gap-1.5">
-              <div className="relative w-9 shrink-0" aria-hidden>
+          <div className="flex min-h-0 flex-1 gap-5 px-5 pb-5">
+            {/* The whole day at a fixed hour scale; a tall day scrolls. The
+                scroll arrives at now (today) or at the day's open, never at
+                midnight. */}
+            <div
+              ref={scroller}
+              className="min-w-0 flex-[2] overflow-y-auto overscroll-contain rounded-lg"
+            >
+              <div className="flex gap-1.5" style={{ height: DAY_PX }}>
+              <div className="relative w-12 shrink-0" aria-hidden>
                 {ticks.map((minute) => (
                   <span
                     key={minute}
-                    className="absolute right-1 -translate-y-1/2 text-[9px] tabular-nums whitespace-nowrap text-[var(--color-ink-muted)]"
+                    className={clsx(
+                      "absolute right-1 text-[10px] tabular-nums whitespace-nowrap text-[var(--color-ink-muted)]",
+                      minute !== 0 && "-translate-y-1/2",
+                    )}
                     style={{ top: `${(minute / 1440) * 100}%` }}
                   >
-                    {minute === 1440
-                      ? ""
-                      : new Date(0, 0, 1, minute / 60).toLocaleTimeString(
-                          undefined,
-                          { hour: "numeric" },
-                        )}
+                    {new Date(0, 0, 1, minute / 60).toLocaleTimeString(
+                      undefined,
+                      { hour: "numeric" },
+                    )}
                   </span>
                 ))}
               </div>
@@ -207,7 +235,7 @@ export function DayModal({
                   !detail.working && "week-day-off",
                 )}
               >
-                {ticks.slice(1, -1).map((minute) => (
+                {ticks.slice(1).map((minute) => (
                   <div
                     key={minute}
                     aria-hidden
@@ -240,8 +268,8 @@ export function DayModal({
                       }}
                       title={`Busy · ${range(block)}`}
                     >
-                      {block.heightPct > 4 && (
-                        <span className="block truncate pt-0.5 text-[9px] text-[var(--color-ink-muted)]">
+                      {block.heightPct >= 2 && (
+                        <span className="block truncate pt-0.5 text-[10px] text-[var(--color-ink-muted)]">
                           {range(block)}
                         </span>
                       )}
@@ -257,7 +285,7 @@ export function DayModal({
                       }}
                       title={`${block.title} · ${range(block)}`}
                     >
-                      <span className="block truncate pt-0.5 text-[9px] text-[var(--zone-ink-muted)]">
+                      <span className="block truncate pt-0.5 text-[10px] text-[var(--zone-ink-muted)]">
                         {block.title}
                       </span>
                     </div>
@@ -270,6 +298,7 @@ export function DayModal({
                     style={{ top: `${detail.nowPct}%` }}
                   />
                 )}
+              </div>
               </div>
             </div>
 
