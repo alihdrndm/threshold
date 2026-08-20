@@ -306,6 +306,76 @@ fn schedule_state(conn: &rusqlite::Connection, id: i64) -> bool {
     })
 }
 
+/// What completing a task did. Decided inside the caller's transaction so the
+/// checkbox and the check-in cannot disagree about what "done" means.
+enum Completion {
+    /// The repeat caught it: the task never went done; this is where it went.
+    Advanced { next_ts: i64 },
+    /// Genuinely done; whether the calendar must hear about the departure.
+    Done { left_schedule: bool },
+}
+
+/// Mark a task done - unless its repeat advances it instead. A repeating
+/// Schedule task stays open and moves to the next matching day at its own
+/// wall-clock time (or the working day's open, when it had no date yet).
+/// Writes only through `conn`, so it is transaction-safe; the calendar side
+/// effects belong to `finish_completion`, called after commit.
+fn complete_task(conn: &rusqlite::Connection, id: i64) -> Result<Completion, String> {
+    use chrono::{Local, TimeZone, Timelike};
+
+    let was_scheduled = schedule_state(conn, id);
+    if was_scheduled {
+        if let Some(task) = tasks::by_id(conn, id)? {
+            if let Some(raw) = task.repeat_days.as_deref() {
+                let days = crate::calendar::repeat::day_mask(raw);
+                let scheduled_local = task
+                    .scheduled_ts
+                    .and_then(|ts| Local.timestamp_opt(ts, 0).single());
+                let (hour, minute) = match scheduled_local {
+                    Some(t) => (t.hour(), t.minute()),
+                    None => {
+                        let start = crate::calendar::settings::read_hours(conn).start_min;
+                        (start / 60, start % 60)
+                    }
+                };
+                // Advance past the held slot, never onto it: completing
+                // Sunday evening for Monday's slot lands after Monday.
+                let now = Local::now();
+                let after = match scheduled_local {
+                    Some(t) if t > now => t,
+                    _ => now,
+                };
+                if let Some(next) =
+                    crate::calendar::repeat::next_occurrence(after, days, hour, minute)
+                {
+                    return Ok(Completion::Advanced {
+                        next_ts: next.timestamp(),
+                    });
+                }
+            }
+        }
+    }
+    tasks::set_status(conn, id, "done")?;
+    Ok(Completion::Done {
+        left_schedule: was_scheduled,
+    })
+}
+
+/// The side effects a completion owes once its transaction committed.
+fn finish_completion(app: &tauri::AppHandle, id: i64, completion: &Completion) {
+    match completion {
+        Completion::Advanced { next_ts } => {
+            crate::calendar::sync::advance_repeating(app.clone(), id, *next_ts);
+        }
+        Completion::Done {
+            left_schedule: true,
+        } => crate::calendar::sync::on_task_left_schedule(app.clone(), id),
+        Completion::Done {
+            left_schedule: false,
+        } => {}
+    }
+}
+
 /// After a task changed, tell the calendar if it entered or left Schedule.
 /// Off the main thread; never fails the change that triggered it.
 fn reconcile_schedule(app: &tauri::AppHandle, db: &State<'_, Db>, id: i64, before: bool) {
@@ -330,13 +400,35 @@ pub fn reorder_tasks(db: State<'_, Db>, ids: Vec<i64>) -> Result<(), String> {
     tasks::reorder(&conn, &ids)
 }
 
+/// What a status change came to. `advanced_to` is set when a repeating task
+/// was "completed": it stayed open and moved to that slot instead of going
+/// done - the frontend builds its notice from this.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusOutcome {
+    pub advanced_to: Option<i64>,
+}
+
 #[tauri::command]
 pub fn set_task_status(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     id: i64,
     status: String,
-) -> Result<(), String> {
+) -> Result<StatusOutcome, String> {
+    if status == "done" {
+        let completion = {
+            let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+            complete_task(&conn, id)?
+        };
+        finish_completion(&app, id, &completion);
+        return Ok(StatusOutcome {
+            advanced_to: match completion {
+                Completion::Advanced { next_ts } => Some(next_ts),
+                Completion::Done { .. } => None,
+            },
+        });
+    }
     let before = {
         let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
         let before = schedule_state(&conn, id);
@@ -344,7 +436,19 @@ pub fn set_task_status(
         before
     };
     reconcile_schedule(&app, &db, id, before);
-    Ok(())
+    Ok(StatusOutcome { advanced_to: None })
+}
+
+/// Set or clear how a Schedule task repeats. `days` is the work_days
+/// vocabulary - "1,3,5", Mon=1..Sun=7 - and None turns the repeat off.
+#[tauri::command]
+pub fn set_task_repeat(db: State<'_, Db>, id: i64, days: Option<String>) -> Result<(), String> {
+    let days = days
+        .as_deref()
+        .map(crate::calendar::repeat::normalize_days)
+        .transpose()?;
+    let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+    tasks::set_repeat_days(&conn, id, days.as_deref())
 }
 
 #[derive(serde::Serialize)]
@@ -660,7 +764,7 @@ pub fn answer_checkin(
     mark_task_done: bool,
 ) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp();
-    {
+    let completed: Option<(i64, Completion)> = {
         let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
         let tx = conn
             .unchecked_transaction()
@@ -671,18 +775,30 @@ pub fn answer_checkin(
 
         // Same transaction, so a task marked done always has a session row
         // saying why. Re-checked here rather than trusted from the UI: the task
-        // may have been deleted while the question sat on screen.
-        let done = mark_task_done
-            && match row.task_id {
+        // may have been deleted while the question sat on screen. A repeating
+        // task advances instead of going done - same rule as the checkbox,
+        // decided by the same helper - and the session still records that the
+        // work happened.
+        let completed = if mark_task_done {
+            match row.task_id {
                 Some(task_id) if tasks::is_open(&tx, task_id).unwrap_or(false) => {
-                    tasks::set_status(&tx, task_id, "done")?;
-                    true
+                    Some((task_id, complete_task(&tx, task_id)?))
                 }
-                _ => false,
-            };
+                _ => None,
+            }
+        } else {
+            None
+        };
 
-        sessions::answer(&tx, session_id, answer, done, now)?;
+        sessions::answer(&tx, session_id, answer, completed.is_some(), now)?;
         tx.commit().map_err(|err| format!("could not save: {err}"))?;
+        completed
+    };
+    // After commit: the calendar hears about it exactly like a checkbox tick
+    // would - the advance, or the departure (which the old inline set_status
+    // silently skipped, leaving the event for the poll to clean up).
+    if let Some((task_id, completion)) = &completed {
+        finish_completion(&app, *task_id, completion);
     }
     crate::checkin::close(&app);
     crate::session::announce_ended(&app, session_id, "answered");

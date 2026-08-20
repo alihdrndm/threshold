@@ -89,8 +89,20 @@ fn schedule_now(app: &AppHandle, task_id: i64) -> Result<(), String> {
     let busy = client.free_busy(now, now + Duration::days(14))?;
     let start = slot::next_free_slot(now, &hours, SLOT, &busy)
         .ok_or("no free slot in the next two weeks - widen your working hours")?;
-    let event = client.insert_event(task_id, &title, start, start + SLOT)?;
+    create_event_at(app, &client, task_id, &title, start)
+}
 
+/// Insert a task's event at a fixed start and record it. The tail every
+/// event-creating path shares: the slot hunt above, and the repeat advance
+/// when the task had no event to move.
+fn create_event_at(
+    app: &AppHandle,
+    client: &Client,
+    task_id: i64,
+    title: &str,
+    start: chrono::DateTime<Local>,
+) -> Result<(), String> {
+    let event = client.insert_event(task_id, title, start, start + SLOT)?;
     {
         let db = app.state::<Db>();
         let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
@@ -106,6 +118,59 @@ fn schedule_now(app: &AppHandle, task_id: i64) -> Result<(), String> {
     super::week::invalidate(app);
     let _ = app.emit("tasks-changed", ());
     Ok(())
+}
+
+/// A repeating task was completed: it does not leave the board, it moves.
+///
+/// The local advance lands first - the card must answer the click even with
+/// no network - then the calendar follows on its own thread, reporting
+/// failure the way every calendar error does. If the patch fails, the poll
+/// may briefly show Google's old time until a retry lands; the same class of
+/// drift as any offline edit, and the card's local time wins the next patch.
+pub fn advance_repeating(app: AppHandle, task_id: i64, next_ts: i64) {
+    let (event_id, title) = {
+        let db = app.state::<Db>();
+        let Ok(conn) = db.0.lock() else { return };
+        let Some(task) = tasks::by_id(&conn, task_id).ok().flatten() else {
+            return;
+        };
+        // None link = keep the stored one (set_schedule COALESCEs).
+        let _ = tasks::set_schedule(
+            &conn,
+            task_id,
+            Some(next_ts),
+            task.calendar_event_id.as_deref(),
+            None,
+        );
+        (task.calendar_event_id, task.title)
+    };
+    super::week::invalidate(&app);
+    let _ = app.emit("tasks-changed", ());
+    if !connected(&app) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let go = || -> Result<(), String> {
+            let client = Client::authed(&app)?;
+            let start = Local
+                .timestamp_opt(next_ts, 0)
+                .single()
+                .ok_or("that is not a valid time")?;
+            match event_id.as_deref() {
+                Some(id) => {
+                    client.patch_event(id, start, start + SLOT)?;
+                    set_status(&app, "Synced");
+                    super::week::invalidate(&app);
+                    let _ = app.emit("tasks-changed", ());
+                    Ok(())
+                }
+                None => create_event_at(&app, &client, task_id, &title, start),
+            }
+        };
+        if let Err(err) = go() {
+            report(&app, &err);
+        }
+    });
 }
 
 /// A task left Schedule (moved, completed, deleted): delete its event.

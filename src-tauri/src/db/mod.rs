@@ -231,6 +231,25 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("migration 5 failed: {err}"))?;
     }
 
+    if version < 6 {
+        // A Schedule task may repeat: "1,3,5" is Mon, Wed, Fri in the same
+        // Mon=1..Sun=7 vocabulary as the work_days setting; "1,2,3,4,5,6,7"
+        // is daily; NULL is no repeat. The rule lives on the task, not the
+        // calendar event - each occurrence is one ordinary event, and
+        // completing the task advances it to the next matching day instead of
+        // letting it leave the board. A weekly slot is a place, not a
+        // deadline, so this stays true to the list's no-due-dates charter.
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE tasks ADD COLUMN repeat_days TEXT;
+            PRAGMA user_version = 6;
+            COMMIT;
+            "#,
+        )
+        .map_err(|err| format!("migration 6 failed: {err}"))?;
+    }
+
     Ok(())
 }
 
@@ -327,12 +346,12 @@ mod migration_tests {
         .unwrap();
 
         // The real, stepwise migration - the same one the app runs on launch.
-        migrate(&conn).expect("v4 -> v5 migration");
+        migrate(&conn).expect("v4 -> head migration");
 
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5, "the schema advanced to 5");
+        assert_eq!(version, 6, "the schema advanced to head");
 
         // The task is untouched, and the new columns exist and default to NULL.
         let task = tasks::by_id(&conn, 7).unwrap().unwrap();
@@ -343,6 +362,54 @@ mod migration_tests {
         assert_eq!(task.scheduled_ts, None);
         assert_eq!(task.calendar_event_id, None);
         assert_eq!(task.calendar_html_link, None);
+        assert_eq!(task.repeat_days, None);
+    }
+
+    /// The schema at version 5: the calendar columns exist, the repeat does
+    /// not. Hand-built for the same reason as `v4_database`.
+    fn v5_database() -> Connection {
+        let conn = v4_database();
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE tasks ADD COLUMN scheduled_ts INTEGER;
+            ALTER TABLE tasks ADD COLUMN calendar_event_id TEXT;
+            ALTER TABLE tasks ADD COLUMN calendar_html_link TEXT;
+            PRAGMA user_version = 5;
+            COMMIT;
+            "#,
+        )
+        .expect("v5 schema");
+        conn
+    }
+
+    #[test]
+    fn upgrading_from_v5_keeps_the_calendar_columns_and_adds_repeat() {
+        let conn = v5_database();
+        conn.execute(
+            "INSERT INTO tasks(id, title, urgent, important, status, created_ts,
+                               scheduled_ts, calendar_event_id, calendar_html_link)
+             VALUES(3, 'a scheduled task', 0, 1, 'open', 'then',
+                    1700000000, 'evt', 'https://calendar.google.com/x')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).expect("v5 -> v6 migration");
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 6);
+
+        let task = tasks::by_id(&conn, 3).unwrap().unwrap();
+        assert_eq!(task.scheduled_ts, Some(1_700_000_000));
+        assert_eq!(task.calendar_event_id.as_deref(), Some("evt"));
+        assert_eq!(
+            task.calendar_html_link.as_deref(),
+            Some("https://calendar.google.com/x")
+        );
+        assert_eq!(task.repeat_days, None);
     }
 
     #[test]
@@ -354,6 +421,6 @@ mod migration_tests {
         migrate(&conn).unwrap();
         let after: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(before, after);
-        assert_eq!(after, 5);
+        assert_eq!(after, 6);
     }
 }

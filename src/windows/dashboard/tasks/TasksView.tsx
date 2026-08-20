@@ -34,6 +34,7 @@ import {
   reorderTasks,
   setSetting,
   setTaskContext,
+  setTaskRepeat,
   setTaskStatus,
   unscheduleTask,
   type Task,
@@ -44,6 +45,7 @@ import { AreasContext } from "./AreaMenu";
 import { CalendarContext } from "./SlotControl";
 import { Popover } from "./Popover";
 import { parseTitle, suggestAreas, tagAtCaret } from "./areas";
+import { formatSlot } from "./slot";
 import { DoneToday, MatrixView } from "./MatrixView";
 import { WeekView } from "../week/WeekView";
 import { TaskCard } from "./TaskCard";
@@ -311,12 +313,36 @@ export function TasksView({
 
   async function toggleDone(task: Task) {
     const next = task.status === "done" ? "open" : "done";
-    // Optimistic: ticking a box should feel instant, not wait on SQLite.
-    setTasks((current) =>
-      current.map((t) => (t.id === task.id ? { ...t, status: next } : t)),
-    );
-    await setTaskStatus(task.id, next);
+    // A repeating Schedule task never actually goes done - it advances - so
+    // skip the optimistic strike-through that would flash and un-flash.
+    const willAdvance =
+      next === "done" &&
+      task.repeatDays !== null &&
+      task.urgent === false &&
+      task.important === true;
+    if (!willAdvance) {
+      // Optimistic: ticking a box should feel instant, not wait on SQLite.
+      setTasks((current) =>
+        current.map((t) => (t.id === task.id ? { ...t, status: next } : t)),
+      );
+    }
+    const outcome = await setTaskStatus(task.id, next);
     await refresh();
+    if (outcome.advancedTo !== null) {
+      const old = task.scheduledTs;
+      say(`Done — back ${formatSlot(outcome.advancedTo, new Date())}`, {
+        label: "Undo",
+        run: () =>
+          run(async () => {
+            setNotice(null);
+            // The status never changed; undoing means putting the slot back
+            // (or back to dateless, if that is where it was).
+            if (old !== null) await rescheduleTask(task.id, old);
+            else await unscheduleTask(task.id);
+            await refresh();
+          }),
+      });
+    }
   }
 
   async function focus(task: Task) {
@@ -438,6 +464,7 @@ export function TasksView({
         reschedule: (t, ts) => run(async () => { await rescheduleTask(t.id, ts); await refresh(); }),
         remove: (t) => run(async () => { await unscheduleTask(t.id); await refresh(); }),
         open: (url) => void openUrl(url),
+        setRepeat: (t, days) => run(async () => { await setTaskRepeat(t.id, days); await refresh(); }),
       }}
     >
     <div className="flex h-full flex-col gap-5 p-8">

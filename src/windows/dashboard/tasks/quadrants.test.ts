@@ -24,6 +24,7 @@ function task(id: number, flags?: { urgent: boolean; important: boolean }): Task
     scheduledTs: null,
     calendarEventId: null,
     calendarHtmlLink: null,
+    repeatDays: null,
   };
 }
 
