@@ -585,6 +585,14 @@ textarea {
   background-color: var(--zone-fill);
   border-left: 2px solid var(--color-accent);
 }
+/* A projected occurrence of a repeating task: not booked yet - it becomes
+   real when the previous one completes - so it is drawn as an outline of the
+   task it will be, never as solid time. */
+.week-task.week-echo {
+  background-color: transparent;
+  border: 1px dashed color-mix(in srgb, var(--color-accent) 50%, transparent);
+  border-left-width: 2px;
+}
 .week-now {
   border-top: 2px solid var(--color-accent);
 }

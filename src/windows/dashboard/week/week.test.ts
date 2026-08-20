@@ -4,6 +4,7 @@ import {
   buildDay,
   buildWeek,
   clipToDay,
+  echoOn,
   formatDuration,
   freeGaps,
   hourTicks,
@@ -299,6 +300,67 @@ describe("buildDay", () => {
     const saturday = buildDay(at(2026, 8, 29), data, [], at(2026, 8, 23, 12));
     expect(saturday.working).toBe(false);
     expect(saturday.gaps).toEqual([]);
+  });
+});
+
+describe("echoOn and repeat projection", () => {
+  // Real occurrence: Tuesday Aug 25 at 10:00, repeating daily.
+  const task = {
+    id: 1,
+    title: "Ritual",
+    scheduledTs: at(2026, 8, 25, 10),
+    repeatDays: "1,2,3,4,5,6,7",
+  };
+
+  it("projects onto later matching days at the same wall-clock time", () => {
+    const echo = echoOn(task, at(2026, 8, 26));
+    expect(echo).toEqual({
+      start: at(2026, 8, 26, 10),
+      end: at(2026, 8, 26, 10, 30),
+    });
+  });
+
+  it("never lands on or before the real occurrence", () => {
+    expect(echoOn(task, at(2026, 8, 25))).toBeNull(); // its own day
+    expect(echoOn(task, at(2026, 8, 24))).toBeNull(); // the day before
+  });
+
+  it("respects the weekday mask", () => {
+    const wedFri = { ...task, repeatDays: "3,5" };
+    expect(echoOn(wedFri, at(2026, 8, 26))).not.toBeNull(); // Wednesday
+    expect(echoOn(wedFri, at(2026, 8, 27))).toBeNull(); // Thursday
+    expect(echoOn(wedFri, at(2026, 8, 28))).not.toBeNull(); // Friday
+  });
+
+  it("is silent without a repeat", () => {
+    expect(echoOn({ ...task, repeatDays: null }, at(2026, 8, 26))).toBeNull();
+    expect(echoOn({ ...task, repeatDays: undefined }, at(2026, 8, 26))).toBeNull();
+  });
+
+  it("fills the week's later columns with echo blocks", () => {
+    const { days } = buildWeek(
+      { startTs: MONDAY, busy: [], hours: HOURS },
+      [task],
+      at(2026, 8, 24, 9),
+    );
+    // Mon: nothing. Tue: the real task. Wed..Sun: one echo each.
+    expect(days[0].blocks).toHaveLength(0);
+    expect(days[1].blocks.map((b) => b.kind)).toEqual(["task"]);
+    for (const day of days.slice(2)) {
+      expect(day.blocks.map((b) => b.kind)).toEqual(["echo"]);
+      expect(day.blocks[0].title).toBe("Ritual");
+    }
+  });
+
+  it("gives the expanded day its echo too", () => {
+    const detail = buildDay(
+      at(2026, 8, 27),
+      { busy: [], hours: HOURS },
+      [task],
+      at(2026, 8, 24, 9),
+    );
+    expect(detail.blocks.map((b) => b.kind)).toEqual(["echo"]);
+    expect(detail.blocks[0].start).toBe(at(2026, 8, 27, 10));
   });
 });
 
