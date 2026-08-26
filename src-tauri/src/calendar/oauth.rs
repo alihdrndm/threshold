@@ -285,6 +285,14 @@ pub fn refresh(app: &AppHandle, current: &Tokens) -> Result<Tokens, String> {
         let body = resp.text().unwrap_or_default();
         if body.contains("invalid_grant") {
             disconnect(app);
+            // Say why, where the Connect button is. The common cause is not
+            // the user: a Cloud project whose consent screen is still in
+            // "Testing" gets refresh tokens that Google expires after 7 days.
+            let why = "Google expired the connection. If the Cloud project's                        OAuth consent screen is in Testing, its tokens last 7 days -                        set the user type to Internal (or publish the app), then reconnect.";
+            if let Ok(conn) = app.state::<Db>().0.lock() {
+                let _ = db::set_setting(&conn, "google_last_sync_status", why);
+            }
+            crate::log::line(&format!("calendar: refresh rejected: {}", body.trim()));
             return Err("Google disconnected - reconnect in Settings.".into());
         }
         return Err(format!("token refresh failed: {body}"));

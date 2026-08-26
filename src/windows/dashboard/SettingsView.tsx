@@ -578,6 +578,17 @@ function GoogleCalendar() {
   }
   useEffect(() => {
     void refresh();
+    // The credentials outlive a disconnect (Google's own token expiry among
+    // the causes), so the form starts from what is stored - an empty box
+    // here would read as "lost" and invite pasting the id back in alone,
+    // which would then overwrite a stored secret with nothing.
+    getSettings()
+      .then((rows) => {
+        const map = new Map(rows);
+        setId(map.get("google_client_id") ?? "");
+        setSecret(map.get("google_client_secret") ?? "");
+      })
+      .catch(() => {});
     const unlisten = listen("calendar-status", () => void refresh());
     return () => void unlisten.then((off) => off());
   }, []);
@@ -636,6 +647,8 @@ function GoogleCalendar() {
               Client secret (optional)
             </span>
             <input
+              type="password"
+              autoComplete="off"
               value={secret}
               onChange={(event) => setSecret(event.target.value)}
               className="ritual-field w-full rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-2 text-sm text-[var(--color-ink)] outline-none focus:border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
@@ -672,6 +685,11 @@ function GoogleCalendar() {
               <span className="text-xs text-[var(--color-ink-muted)]">{busy}</span>
             )}
           </div>
+          {!busy && status?.lastSyncStatus && status.lastSyncStatus !== "Disconnected" && (
+            <p className="text-xs text-[var(--color-ink-muted)]">
+              {status.lastSyncStatus}
+            </p>
+          )}
           {showHelp && (
             <ol className="flex list-decimal flex-col gap-1 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] p-4 pl-8 text-xs text-[var(--color-ink-muted)]">
               <li>
