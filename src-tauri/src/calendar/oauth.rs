@@ -211,6 +211,7 @@ pub fn connect(app: &AppHandle) -> Result<(), String> {
     open_in_browser(&auth_url);
 
     let (code, got_state) = catch_redirect(&listener)?;
+    crate::log::line("calendar: redirect caught, exchanging the code");
     if got_state != state {
         return Err("the redirect state did not match - connection aborted".into());
     }

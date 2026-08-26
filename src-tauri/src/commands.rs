@@ -1010,7 +1010,11 @@ pub fn calendar_status(db: State<'_, Db>) -> Result<CalendarStatus, String> {
 /// and report through the `calendar-status` event the flow emits.
 #[tauri::command(async)]
 pub fn google_connect(app: tauri::AppHandle) -> Result<(), String> {
-    crate::calendar::oauth::connect(&app)
+    crate::log::line("calendar: connect started");
+    crate::calendar::oauth::connect(&app).inspect_err(|err| {
+        // The button shows this too, but the line outlives the panel.
+        crate::log::line(&format!("calendar: connect failed: {err}"));
+    })
 }
 
 #[tauri::command]
