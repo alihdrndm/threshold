@@ -229,14 +229,24 @@ pub fn connect(app: &AppHandle) -> Result<(), String> {
     }
 
     let http = reqwest::blocking::Client::new();
-    let resp: TokenResponse = http
+    let resp = http
         .post(TOKEN)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(form_encode(&form))
         .send()
-        .map_err(|err| format!("token exchange failed: {err}"))?
-        .error_for_status()
-        .map_err(|err| format!("Google rejected the connection: {err}"))?
+        .map_err(|err| format!("token exchange failed: {err}"))?;
+    if !resp.status().is_success() {
+        // Google says why in the body; the status alone is a guessing game
+        // (a Web-type client wants a secret and a registered redirect, a
+        // Desktop-type client wants neither).
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!(
+            "Google rejected the connection ({status}): {}",
+            explain_oauth_error(&body)
+        ));
+    }
+    let resp: TokenResponse = resp
         .json()
         .map_err(|err| format!("token response was not understood: {err}"))?;
 
@@ -259,6 +269,39 @@ pub fn connect(app: &AppHandle) -> Result<(), String> {
     let _ = app.emit("calendar-status", "connected");
     crate::log::line("calendar: connected");
     Ok(())
+}
+
+/// Google's `{"error", "error_description"}` body as one readable line, with
+/// a hint for the two mistakes a self-made client most often carries.
+fn explain_oauth_error(body: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct OauthError {
+        error: String,
+        error_description: Option<String>,
+    }
+    let Ok(parsed) = serde_json::from_str::<OauthError>(body) else {
+        return body.trim().to_string();
+    };
+    let mut line = match parsed.error_description {
+        Some(desc) => format!("{} - {desc}", parsed.error),
+        None => parsed.error.clone(),
+    };
+    let hint = match parsed.error.as_str() {
+        "redirect_uri_mismatch" => Some(
+            "Threshold answers on a loopback port, which only a \"Desktop app\" client accepts - create one of that type in Google Cloud > Clients.",
+        ),
+        "invalid_client" | "invalid_request"
+            if line.contains("client_secret") || line.contains("Unauthorized") =>
+        {
+            Some("This client type wants its secret: paste it, or use a \"Desktop app\" client, which needs none.")
+        }
+        _ => None,
+    };
+    if let Some(hint) = hint {
+        line.push_str(". ");
+        line.push_str(hint);
+    }
+    line
 }
 
 /// A fresh access token from the stored refresh token. Saves the new access
@@ -358,6 +401,21 @@ mod tests {
         assert!((43..=128).contains(&verifier.len()));
         assert_eq!(challenge, b64url(&Sha256::digest(verifier.as_bytes())));
         assert!(!challenge.contains('=') && !challenge.contains('+') && !challenge.contains('/'));
+    }
+
+    #[test]
+    fn an_oauth_error_body_becomes_one_line_with_a_hint() {
+        let line = explain_oauth_error(
+            r#"{"error":"redirect_uri_mismatch","error_description":"Bad Request"}"#,
+        );
+        assert!(line.starts_with("redirect_uri_mismatch - Bad Request"));
+        assert!(line.contains("Desktop app"));
+
+        let line = explain_oauth_error(r#"{"error":"invalid_request","error_description":"client_secret is missing."}"#);
+        assert!(line.contains("paste it"));
+
+        // Not JSON: passed through as-is.
+        assert_eq!(explain_oauth_error(" <html>proxy</html> "), "<html>proxy</html>");
     }
 
     #[test]
