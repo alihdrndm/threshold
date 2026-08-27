@@ -4,7 +4,8 @@
 //! page in the real browser, catch the redirect on a loopback socket, exchange
 //! the code for tokens. PKCE (S256) means the exchange is bound to this run and
 //! needs no shipped secret - which is the point, because a secret compiled into
-//! a desktop binary is not a secret. The client id (and optional secret) are
+//! a desktop binary is not a secret - though Google still requires it at the
+//! token exchange, Desktop client or not. The client id and secret are
 //! the user's own, pasted into Settings; the app ships neither.
 //!
 //! The loopback listener is the wall's skeleton (bind, bounded read, one shot)
@@ -165,7 +166,8 @@ struct TokenResponse {
     expires_in: i64,
 }
 
-/// Read the user's OAuth client id and optional secret from settings.
+/// Read the user's OAuth client id and secret from settings. The secret is
+/// optional here only so an old row without one still connects if Google lets it.
 fn client_creds(app: &AppHandle) -> Result<(String, Option<String>), String> {
     let db = app.state::<Db>();
     let conn = db.0.lock().map_err(|_| "database lock poisoned")?;

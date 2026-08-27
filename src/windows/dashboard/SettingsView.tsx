@@ -562,7 +562,7 @@ function TimeField({
 }
 
 /**
- * Connect Google, or set it up. The client id and optional secret are the
+ * Connect Google, or set it up. The client id and secret are the
  * user's own - the app ships none - so the section carries the steps to make
  * one, collapsed until asked for.
  */
@@ -644,7 +644,11 @@ function GoogleCalendar() {
           </label>
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-[var(--color-ink-muted)]">
-              Client secret (optional)
+              Client secret
+            </span>
+            <span className="text-xs text-[var(--color-ink-muted)]">
+              Shown beside the Client ID in Google Cloud. Google asks for it
+              even from a Desktop app client.
             </span>
             <input
               type="password"
