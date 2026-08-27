@@ -21,3 +21,6 @@ dist/
 .DS_Store
 Thumbs.db
 
+
+# Google OAuth client downloads - never commit
+client_secret_*.json
