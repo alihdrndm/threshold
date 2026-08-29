@@ -1086,6 +1086,46 @@ pub fn dismiss_checkin(
     Ok(())
 }
 
+/// Put the reminder off for a few minutes, from its own buttons.
+///
+/// A snooze defers the knock, never the task: the slot and its calendar event
+/// stay exactly where they are, which is also what Google's own snooze does.
+/// The bound is a day - the presets stop at thirty minutes, but a stray
+/// payload should fail loudly rather than sleep for a year.
+#[tauri::command]
+pub fn snooze_reminder(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    task_id: i64,
+    minutes: i64,
+) -> Result<(), String> {
+    if !(1..=24 * 60).contains(&minutes) {
+        return Err(format!("cannot snooze for {minutes} minutes"));
+    }
+    {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        let until = chrono::Utc::now().timestamp() + minutes * 60;
+        tasks::set_reminder_snooze(&conn, task_id, until)?;
+    }
+    crate::reminder::close(&app);
+    Ok(())
+}
+
+/// Seen, acknowledged, done with - this occurrence will not knock again.
+#[tauri::command]
+pub fn dismiss_reminder(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+    task_id: i64,
+) -> Result<(), String> {
+    {
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        tasks::mark_reminded(&conn, task_id)?;
+    }
+    crate::reminder::close(&app);
+    Ok(())
+}
+
 /// Lift a block that is still owed time, and record that it happened.
 ///
 /// `async` because it waits on the elevated helper for up to twelve seconds;

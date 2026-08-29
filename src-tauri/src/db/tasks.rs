@@ -358,8 +358,16 @@ pub fn set_schedule(
     event_id: Option<&str>,
     html_link: Option<&str>,
 ) -> Result<(), String> {
+    // The snooze survives only a write that confirms the same time (the poll
+    // does this constantly); a real move clears it - the deferral belonged to
+    // the old occurrence. The fired marker is left alone on purpose: it is
+    // keyed to the scheduled_ts it fired for, so a new time makes it stale and
+    // the reminder re-arms with no clearing code here.
     conn.execute(
-        "UPDATE tasks SET scheduled_ts = ?1, calendar_event_id = ?2,
+        "UPDATE tasks SET
+                remind_snoozed_until = CASE WHEN scheduled_ts IS ?1
+                                            THEN remind_snoozed_until ELSE NULL END,
+                scheduled_ts = ?1, calendar_event_id = ?2,
                 calendar_html_link = COALESCE(?3, calendar_html_link)
          WHERE id = ?4",
         rusqlite::params![scheduled_ts, event_id, html_link, id],
@@ -373,12 +381,81 @@ pub fn set_schedule(
 pub fn clear_schedule(conn: &Connection, id: i64) -> Result<(), String> {
     conn.execute(
         "UPDATE tasks SET scheduled_ts = NULL, calendar_event_id = NULL,
-                calendar_html_link = NULL
+                calendar_html_link = NULL,
+                remind_fired_for_ts = NULL, remind_snoozed_until = NULL
          WHERE id = ?1",
         [id],
     )
     .map(|_| ())
     .map_err(|err| format!("could not clear the slot: {err}"))
+}
+
+/// One Schedule task's reminder bookkeeping, as the watcher's pass reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReminderRow {
+    pub id: i64,
+    pub scheduled_ts: i64,
+    /// The occurrence already handled; the reminder is spent iff this equals
+    /// `scheduled_ts`.
+    pub fired_for_ts: Option<i64>,
+    /// When a snoozed reminder comes back; NULL when not snoozed.
+    pub snoozed_until: Option<i64>,
+}
+
+/// Every task a reminder could concern: open, sitting in Schedule, holding a
+/// slot. Earliest slot first, so the watcher's "one window at a time" picks
+/// the most pressing. Deciding which of these is due is the watcher's job -
+/// the query only knows who is eligible.
+pub fn reminder_rows(conn: &Connection) -> Result<Vec<ReminderRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scheduled_ts, remind_fired_for_ts, remind_snoozed_until FROM tasks
+             WHERE status = 'open' AND urgent = 0 AND important = 1
+               AND scheduled_ts IS NOT NULL
+             ORDER BY scheduled_ts, id",
+        )
+        .map_err(|err| format!("could not read reminders: {err}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ReminderRow {
+                id: row.get(0)?,
+                scheduled_ts: row.get(1)?,
+                fired_for_ts: row.get(2)?,
+                snoozed_until: row.get(3)?,
+            })
+        })
+        .map_err(|err| format!("could not read reminders: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("could not read reminders: {err}"))
+}
+
+/// Consume the reminder for the occurrence the task currently holds - on
+/// dismiss, or when the watcher writes off one that went stale. Reading
+/// `scheduled_ts` inside the UPDATE keeps the pair atomic: whatever occurrence
+/// the row holds at this moment is the one being spent.
+pub fn mark_reminded(conn: &Connection, id: i64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE tasks SET remind_fired_for_ts = scheduled_ts,
+                remind_snoozed_until = NULL
+         WHERE id = ?1",
+        [id],
+    )
+    .map(|_| ())
+    .map_err(|err| format!("could not dismiss the reminder: {err}"))
+}
+
+/// Defer the reminder to `until_ts`. The base fire is consumed in the same
+/// write - from now on the snooze is the only pending fire, and it never
+/// touches the slot or the calendar event.
+pub fn set_reminder_snooze(conn: &Connection, id: i64, until_ts: i64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE tasks SET remind_snoozed_until = ?2,
+                remind_fired_for_ts = scheduled_ts
+         WHERE id = ?1",
+        rusqlite::params![id, until_ts],
+    )
+    .map(|_| ())
+    .map_err(|err| format!("could not snooze the reminder: {err}"))
 }
 
 /// Set or clear how a task repeats. Validation is the command's job; this
@@ -704,6 +781,97 @@ mod tests {
         assert_eq!(task.important, Some(true));
         assert_eq!(task.sort_order, 6, "after the settled task, not among it");
         assert!(append_to_quadrant(&conn, 999, Some(false), Some(true)).is_err());
+    }
+
+    /// Shorthand: a task in Schedule holding a slot at `ts`.
+    fn scheduled(conn: &Connection, title: &str, ts: i64) -> i64 {
+        let id = add(conn, &new(title)).unwrap();
+        set_quadrant(conn, id, Some(false), Some(true), 0).unwrap();
+        set_schedule(conn, id, Some(ts), Some("evt"), None).unwrap();
+        id
+    }
+
+    fn reminder_of(conn: &Connection, id: i64) -> ReminderRow {
+        reminder_rows(conn)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == id)
+            .expect("the task should be eligible")
+    }
+
+    #[test]
+    fn only_open_schedule_tasks_with_a_slot_are_reminder_eligible() {
+        let conn = memory_db();
+        let slotted = scheduled(&conn, "has a slot", 2_000);
+        let dateless = add(&conn, &new("no date yet")).unwrap();
+        set_quadrant(&conn, dateless, Some(false), Some(true), 1).unwrap();
+        let elsewhere = add(&conn, &new("do first, not schedule")).unwrap();
+        set_quadrant(&conn, elsewhere, Some(true), Some(true), 0).unwrap();
+        let finished = scheduled(&conn, "already done", 1_000);
+        set_status(&conn, finished, "done").unwrap();
+        let earlier = scheduled(&conn, "the more pressing slot", 1_500);
+
+        let ids: Vec<i64> = reminder_rows(&conn).unwrap().iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![earlier, slotted], "earliest slot first, others excluded");
+    }
+
+    #[test]
+    fn dismissing_spends_the_occurrence_and_a_move_re_arms_it() {
+        let conn = memory_db();
+        let id = scheduled(&conn, "stand-up", 2_000);
+        assert_eq!(reminder_of(&conn, id).fired_for_ts, None, "armed on arrival");
+
+        mark_reminded(&conn, id).unwrap();
+        let row = reminder_of(&conn, id);
+        assert_eq!(row.fired_for_ts, Some(2_000), "spent for exactly this occurrence");
+
+        // The slot moves: the marker still says 2_000, which no longer matches -
+        // stale by key, re-armed without any clearing code.
+        set_schedule(&conn, id, Some(3_000), Some("evt"), None).unwrap();
+        let row = reminder_of(&conn, id);
+        assert_eq!(row.scheduled_ts, 3_000);
+        assert_eq!(row.fired_for_ts, Some(2_000));
+        assert_ne!(row.fired_for_ts, Some(row.scheduled_ts));
+    }
+
+    #[test]
+    fn a_snooze_survives_a_confirming_write_but_not_a_move() {
+        let conn = memory_db();
+        let id = scheduled(&conn, "review", 2_000);
+        set_reminder_snooze(&conn, id, 1_900).unwrap();
+        let row = reminder_of(&conn, id);
+        assert_eq!(row.snoozed_until, Some(1_900));
+        assert_eq!(row.fired_for_ts, Some(2_000), "the base fire is consumed by snoozing");
+
+        // The poll confirming the same slot must not cancel a live snooze.
+        set_schedule(&conn, id, Some(2_000), Some("evt"), None).unwrap();
+        assert_eq!(reminder_of(&conn, id).snoozed_until, Some(1_900));
+
+        // A real move does: the deferral belonged to the old occurrence.
+        set_schedule(&conn, id, Some(4_000), Some("evt"), None).unwrap();
+        let row = reminder_of(&conn, id);
+        assert_eq!(row.snoozed_until, None);
+        assert_eq!(row.fired_for_ts, Some(2_000), "stale, so the new slot is armed");
+    }
+
+    #[test]
+    fn leaving_the_calendar_forgets_the_reminder_state_too() {
+        let conn = memory_db();
+        let id = scheduled(&conn, "gym", 2_000);
+        mark_reminded(&conn, id).unwrap();
+        set_reminder_snooze(&conn, id, 2_100).unwrap();
+
+        clear_schedule(&conn, id).unwrap();
+        let (fired, snoozed): (Option<i64>, Option<i64>) = conn
+            .query_row(
+                "SELECT remind_fired_for_ts, remind_snoozed_until FROM tasks WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(fired, None);
+        assert_eq!(snoozed, None);
+        assert!(reminder_rows(&conn).unwrap().is_empty(), "dateless means no reminder");
     }
 
     #[test]

@@ -209,6 +209,56 @@ export function SettingsView({
         <GoogleCalendar />
       </Section>
 
+      {/* The desktop half of the 10-minute popup every synced event already
+          asks of the phone. Zero is the off switch, the same "zero is
+          meaningful" convention the interrupt thresholds use — a separate
+          toggle would be a second way to say the same thing. */}
+      <Section
+        title="Reminders"
+        note="A small corner note before a scheduled task is due, with snooze — the desktop twin of the phone's notification. Zero turns it off; the phone's own 10-minute popup is Google's and stays either way."
+      >
+        <Number
+          label="Minutes of warning before a task's slot"
+          unit="min"
+          value={values.remind_before_min ?? "10"}
+          onChange={(v) => void update("remind_before_min", v)}
+        />
+        {/* Labelled in the row, not just for screen readers: two unlabelled
+            pills under the minutes field read as an off switch for the whole
+            feature, which zero already is. */}
+        <div className="flex items-center justify-between gap-4 text-sm">
+          <span className="text-[var(--color-ink-muted)]">
+            Chime when it appears
+          </span>
+          <div
+            role="radiogroup"
+            aria-label="Chime when it appears"
+            className="flex flex-wrap gap-2"
+          >
+            {(["on", "off"] as const).map((option) => {
+              const on = (values.reminder_sound ?? "on") === option;
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => void update("reminder_sound", option)}
+                  className={clsx(
+                    "ritual-pressable rounded-full border px-4 py-2 text-sm capitalize",
+                    on
+                      ? "border-[var(--color-accent)] text-[var(--color-ink)]"
+                      : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
+                  )}
+                >
+                  {option}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </Section>
+
       {/* Seconds, not minutes: the people who want every return met want
           ten seconds, and a field that could not say ten seconds was a
           field that could not say what they meant. Zero is allowed and means

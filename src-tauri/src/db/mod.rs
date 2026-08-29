@@ -250,6 +250,29 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("migration 6 failed: {err}"))?;
     }
 
+    if version < 7 {
+        // A reminder is the desktop's copy of the 10-minute popup every synced
+        // event already carries on the phone. Both columns are bookkeeping for
+        // that window, not new meaning on the task.
+        //
+        // `remind_fired_for_ts` records WHICH occurrence was already handled,
+        // by storing the scheduled_ts it fired for: the reminder is spent only
+        // while the two are equal, so moving the slot - reschedule, repeat
+        // advance, a drag in Google - re-arms it with no clearing code at all.
+        // `remind_snoozed_until` is the one deferral the user asked for from
+        // the reminder itself; it never moves the slot or the calendar event.
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE tasks ADD COLUMN remind_fired_for_ts INTEGER;
+            ALTER TABLE tasks ADD COLUMN remind_snoozed_until INTEGER;
+            PRAGMA user_version = 7;
+            COMMIT;
+            "#,
+        )
+        .map_err(|err| format!("migration 7 failed: {err}"))?;
+    }
+
     Ok(())
 }
 
@@ -351,7 +374,7 @@ mod migration_tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6, "the schema advanced to head");
+        assert_eq!(version, 7, "the schema advanced to head");
 
         // The task is untouched, and the new columns exist and default to NULL.
         let task = tasks::by_id(&conn, 7).unwrap().unwrap();
@@ -395,12 +418,12 @@ mod migration_tests {
         )
         .unwrap();
 
-        migrate(&conn).expect("v5 -> v6 migration");
+        migrate(&conn).expect("v5 -> head migration");
 
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         let task = tasks::by_id(&conn, 3).unwrap().unwrap();
         assert_eq!(task.scheduled_ts, Some(1_700_000_000));
@@ -412,6 +435,55 @@ mod migration_tests {
         assert_eq!(task.repeat_days, None);
     }
 
+    /// The schema at version 6: repeat exists, the reminder bookkeeping does
+    /// not. Hand-built for the same reason as `v4_database`.
+    fn v6_database() -> Connection {
+        let conn = v5_database();
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE tasks ADD COLUMN repeat_days TEXT;
+            PRAGMA user_version = 6;
+            COMMIT;
+            "#,
+        )
+        .expect("v6 schema");
+        conn
+    }
+
+    #[test]
+    fn upgrading_from_v6_adds_the_reminder_columns_as_null() {
+        let conn = v6_database();
+        conn.execute(
+            "INSERT INTO tasks(id, title, urgent, important, status, created_ts,
+                               scheduled_ts, repeat_days)
+             VALUES(9, 'a repeating slot', 0, 1, 'open', 'then', 1700000000, '1,3,5')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).expect("v6 -> head migration");
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 7);
+
+        // Existing data untouched; the new columns exist and read as NULL.
+        let (fired, snoozed): (Option<i64>, Option<i64>) = conn
+            .query_row(
+                "SELECT remind_fired_for_ts, remind_snoozed_until FROM tasks WHERE id = 9",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(fired, None);
+        assert_eq!(snoozed, None);
+        let task = tasks::by_id(&conn, 9).unwrap().unwrap();
+        assert_eq!(task.scheduled_ts, Some(1_700_000_000));
+        assert_eq!(task.repeat_days.as_deref(), Some("1,3,5"));
+    }
+
     #[test]
     fn migrating_an_already_current_database_is_a_no_op() {
         let conn = Connection::open_in_memory().unwrap();
@@ -421,6 +493,6 @@ mod migration_tests {
         migrate(&conn).unwrap();
         let after: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(before, after);
-        assert_eq!(after, 6);
+        assert_eq!(after, 7);
     }
 }
