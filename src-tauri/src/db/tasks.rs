@@ -429,6 +429,45 @@ pub fn reminder_rows(conn: &Connection) -> Result<Vec<ReminderRow>, String> {
         .map_err(|err| format!("could not read reminders: {err}"))
 }
 
+/// A repeating Schedule task whose slot is behind `before_ts` - what the
+/// calendar's roll-forward brings up to date.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleRepeat {
+    pub id: i64,
+    pub scheduled_ts: i64,
+    pub repeat_days: String,
+    pub calendar_event_id: Option<String>,
+    pub title: String,
+}
+
+/// Open repeating tasks holding a slot earlier than `before_ts` (typically
+/// today's local midnight: a missed slot keeps its day until that day is
+/// over). Non-repeating tasks are exempt on purpose - a one-off in the past
+/// is the user's business; only a ritual has a "next time" to move to.
+pub fn stale_repeats(conn: &Connection, before_ts: i64) -> Result<Vec<StaleRepeat>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scheduled_ts, repeat_days, calendar_event_id, title FROM tasks
+             WHERE status = 'open' AND urgent = 0 AND important = 1
+               AND repeat_days IS NOT NULL AND scheduled_ts < ?1
+             ORDER BY scheduled_ts, id",
+        )
+        .map_err(|err| format!("could not read stale repeats: {err}"))?;
+    let rows = stmt
+        .query_map([before_ts], |row| {
+            Ok(StaleRepeat {
+                id: row.get(0)?,
+                scheduled_ts: row.get(1)?,
+                repeat_days: row.get(2)?,
+                calendar_event_id: row.get(3)?,
+                title: row.get(4)?,
+            })
+        })
+        .map_err(|err| format!("could not read stale repeats: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("could not read stale repeats: {err}"))
+}
+
 /// Consume the reminder for the occurrence the task currently holds - on
 /// dismiss, or when the watcher writes off one that went stale. Reading
 /// `scheduled_ts` inside the UPDATE keeps the pair atomic: whatever occurrence
@@ -852,6 +891,26 @@ mod tests {
         let row = reminder_of(&conn, id);
         assert_eq!(row.snoozed_until, None);
         assert_eq!(row.fired_for_ts, Some(2_000), "stale, so the new slot is armed");
+    }
+
+    #[test]
+    fn only_open_repeating_schedule_tasks_go_stale() {
+        let conn = memory_db();
+        let ritual = scheduled(&conn, "morning pages", 1_000);
+        set_repeat_days(&conn, ritual, Some("1,2,3,4,5,6,7")).unwrap();
+        let oneoff = scheduled(&conn, "one-off in the past", 900);
+        let current = scheduled(&conn, "future ritual", 5_000);
+        set_repeat_days(&conn, current, Some("1")).unwrap();
+        let finished = scheduled(&conn, "done ritual", 800);
+        set_repeat_days(&conn, finished, Some("1")).unwrap();
+        set_status(&conn, finished, "done").unwrap();
+
+        let stale = stale_repeats(&conn, 2_000).unwrap();
+        assert_eq!(stale.len(), 1, "one-offs, future and done stay out");
+        assert_eq!(stale[0].id, ritual);
+        assert_eq!(stale[0].repeat_days, "1,2,3,4,5,6,7");
+        assert_eq!(stale[0].calendar_event_id.as_deref(), Some("evt"));
+        let _ = oneoff;
     }
 
     #[test]

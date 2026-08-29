@@ -62,7 +62,7 @@ export function SlotControl({ task }: { task: Task }) {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Scheduled: ${label}. Change`}
-        className="grid h-6 shrink-0 place-items-center rounded-full px-2 text-[10px] tracking-[0.14em] text-[var(--zone-ink-muted)] uppercase transition duration-150 hover:text-[var(--color-ink)] active:scale-95"
+        className="grid h-6 shrink-0 place-items-center rounded-full px-2 text-[10px] tracking-[0.14em] text-[var(--zone-ink-muted)] uppercase transition-[color,transform] duration-150 hover:text-[var(--color-ink)] active:scale-[0.97]"
       >
         {label}
       </button>

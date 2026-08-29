@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import {
   answerCheckin,
   continueSession,
@@ -34,6 +35,7 @@ export function CheckInWindow() {
   const sessionId = Number(
     new URLSearchParams(window.location.search).get("session"),
   );
+  const reduce = useReducedMotion();
   const [subject, setSubject] = useState<PendingCheckin | null>(null);
   const [markDone, setMarkDone] = useState(false);
   const [step, setStep] = useState<Step>("ask");
@@ -139,7 +141,18 @@ export function CheckInWindow() {
   );
 
   return (
-    <main className="checkin-card flex h-full flex-col justify-between gap-4 p-6 text-[var(--color-ink)]">
+    // The reminder's entrance, verbatim - the two corner cards are declared
+    // twins ("same size, same corner"), so they arrive the same way. A
+    // frameless always-on-top window hard-cutting onto the desktop reads as
+    // a glitch; 260ms of rise-and-fade reads as a knock.
+    <motion.main
+      className="checkin-card flex h-full flex-col justify-between gap-4 p-6 text-[var(--color-ink)]"
+      initial={
+        reduce ? { opacity: 0 } : { opacity: 0, transform: "translateY(8px)" }
+      }
+      animate={{ opacity: 1, transform: "translateY(0px)" }}
+      transition={{ duration: 0.26, ease: [0.23, 1, 0.32, 1] }}
+    >
       {step === "ask" && (
         <>
           <div className="flex flex-col gap-1.5">
@@ -247,7 +260,7 @@ export function CheckInWindow() {
           {CHECKIN.dismiss}
         </button>
       </div>
-    </main>
+    </motion.main>
   );
 }
 

@@ -74,6 +74,34 @@ pub fn next_occurrence(
     None
 }
 
+/// Where a missed ritual belongs now: the earliest occurrence of `anchor`'s
+/// pattern landing on `today` or later, same wall-clock time.
+///
+/// `next_occurrence` answers "when does it come back after a completion";
+/// this answers what to do with a slot nobody completed once its day is over.
+/// It steps through the days that were slept through without piling them up -
+/// a week of missed dailies becomes one slot today, not seven behind you.
+/// An anchor already on or past `today` is where it belongs. `None` when the
+/// mask is empty.
+pub fn roll_forward(
+    anchor: DateTime<Local>,
+    days: [bool; 7],
+    today: chrono::NaiveDate,
+) -> Option<DateTime<Local>> {
+    use chrono::Timelike;
+    let (hour, minute) = (anchor.hour(), anchor.minute());
+    let mut current = anchor;
+    // Each step strictly advances a day, so the bound is only a guard against
+    // a wildly wrong clock, not part of the logic.
+    for _ in 0..=366 {
+        if current.date_naive() >= today {
+            return Some(current);
+        }
+        current = next_occurrence(current, days, hour, minute)?;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +164,48 @@ mod tests {
         let next = next_occurrence(at(2026, 3, 6, 9, 0), days, 9, 0).unwrap();
         assert_eq!(next, at(2026, 3, 9, 9, 0));
         assert_eq!((next.hour(), next.minute()), (9, 0));
+    }
+
+    #[test]
+    fn a_missed_daily_rolls_to_today_at_its_own_time() {
+        // Anchored Monday 2026-06-01 09:30; today is Thursday the 4th.
+        let today = at(2026, 6, 4, 0, 0).date_naive();
+        let rolled = roll_forward(at(2026, 6, 1, 9, 30), DAILY, today).unwrap();
+        assert_eq!(rolled, at(2026, 6, 4, 9, 30));
+    }
+
+    #[test]
+    fn a_weekly_ritual_skips_to_its_next_day_not_to_today() {
+        // Monday-only mask anchored Mon 2026-06-01; today is Wednesday.
+        let days = day_mask("1");
+        let today = at(2026, 6, 3, 0, 0).date_naive();
+        let rolled = roll_forward(at(2026, 6, 1, 9, 0), days, today).unwrap();
+        assert_eq!(rolled, at(2026, 6, 8, 9, 0), "next Monday, not midweek");
+    }
+
+    #[test]
+    fn an_anchor_already_current_stays_put() {
+        let today = at(2026, 6, 1, 0, 0).date_naive();
+        let anchor = at(2026, 6, 1, 8, 0);
+        assert_eq!(roll_forward(anchor, DAILY, today).unwrap(), anchor);
+        let future = at(2026, 6, 5, 8, 0);
+        assert_eq!(roll_forward(future, DAILY, today).unwrap(), future);
+    }
+
+    #[test]
+    fn a_long_absence_becomes_one_slot_not_a_backlog() {
+        // Weekday mask anchored five weeks back; lands on the first weekday
+        // on or after today, never on anything in between.
+        let days = day_mask("1,2,3,4,5");
+        let today = at(2026, 7, 11, 0, 0).date_naive(); // a Saturday
+        let rolled = roll_forward(at(2026, 6, 1, 9, 0), days, today).unwrap();
+        assert_eq!(rolled, at(2026, 7, 13, 9, 0), "Monday the 13th");
+    }
+
+    #[test]
+    fn rolling_an_empty_mask_is_nothing() {
+        let today = at(2026, 6, 4, 0, 0).date_naive();
+        assert!(roll_forward(at(2026, 6, 1, 9, 0), [false; 7], today).is_none());
     }
 
     #[test]

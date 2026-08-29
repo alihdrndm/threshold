@@ -82,7 +82,11 @@ export function TasksView({
     text: string;
     action: { label: string; run: () => void };
   } | null>(null);
+  // Self-dismissal fades; only user-triggered removal is instant. The extra
+  // flag drives the fade's last 180ms before the timer takes the line away.
+  const [noticeLeaving, setNoticeLeaving] = useState(false);
   const noticeTimer = useRef<number | null>(null);
+  const noticeLeaveTimer = useRef<number | null>(null);
   const draftField = useRef<HTMLInputElement>(null);
   // The `#area` autocomplete: where the caret is, and which suggestion is lit.
   const [caret, setCaret] = useState(0);
@@ -105,6 +109,8 @@ export function TasksView({
   useEffect(
     () => () => {
       if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+      if (noticeLeaveTimer.current !== null)
+        window.clearTimeout(noticeLeaveTimer.current);
     },
     [],
   );
@@ -198,8 +204,21 @@ export function TasksView({
 
   function say(text: string, action: { label: string; run: () => void }) {
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    if (noticeLeaveTimer.current !== null)
+      window.clearTimeout(noticeLeaveTimer.current);
     setNotice({ text, action });
-    noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
+    setNoticeLeaving(false);
+    // The line dismisses itself, so it fades rather than vanishing
+    // mid-sentence - "nothing is faster than gone" is for removals the user
+    // asked for, and this one they did not.
+    noticeLeaveTimer.current = window.setTimeout(
+      () => setNoticeLeaving(true),
+      6000 - 180,
+    );
+    noticeTimer.current = window.setTimeout(() => {
+      setNotice(null);
+      setNoticeLeaving(false);
+    }, 6000);
   }
 
   /// A `#area` in the title wins over the selected chip: the tag was typed
@@ -737,7 +756,14 @@ export function TasksView({
           went right. Undo is styled like Focus — the interface keeps one
           vocabulary for "small round thing you can press". */}
       {notice && (
-        <div className="matrix-notice flex items-center gap-3 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-2 text-sm">
+        <div
+          // Keyed by text so a second notice replays the entrance instead of
+          // blinking into the finished keyframe's last frame (the same fix
+          // .slot-caption already carries).
+          key={notice.text}
+          data-leaving={noticeLeaving || undefined}
+          className="matrix-notice flex items-center gap-3 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-fill-subtle)] px-4 py-2 text-sm"
+        >
           <span className="min-w-0 flex-1 truncate text-[var(--color-ink-muted)]">
             {notice.text}
           </span>
@@ -785,8 +811,15 @@ export function TasksView({
         </div>
 
         {/* The dragged card follows the cursor at full opacity so the drop
-            target underneath stays readable. */}
-        <DragOverlay>
+            target underneath stays readable. The settle is dnd-kit's default
+            duration on the house curve - its own default is an overshoot
+            bounce, the one curve this app never speaks. */}
+        <DragOverlay
+          dropAnimation={{
+            duration: 200,
+            easing: "cubic-bezier(0.23, 1, 0.32, 1)",
+          }}
+        >
           {dragging && (
             <div className="matrix-drag-overlay rounded-xl px-3 py-2.5 text-sm">
               {dragging.title}

@@ -40,7 +40,7 @@ export function AreaControl({ task }: { task: Task }) {
         aria-expanded={open}
         aria-label={current ? `Area: ${current.name}. Change area` : "Set an area"}
         className={clsx(
-          "grid h-6 shrink-0 place-items-center rounded-full transition duration-150 active:scale-95",
+          "grid h-6 shrink-0 place-items-center rounded-full transition-[color,background-color,transform] duration-150 active:scale-[0.97]",
           current
             ? "px-2 text-[10px] tracking-[0.14em] uppercase text-[var(--zone-ink-muted)] hover:text-[var(--color-ink)]"
             : "w-6 text-xs text-[color-mix(in_srgb,var(--zone-ink-muted)_75%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-ink)_8%,transparent)] hover:text-[var(--color-ink)]",

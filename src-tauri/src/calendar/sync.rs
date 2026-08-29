@@ -285,6 +285,57 @@ pub fn remove_from_calendar(app: &AppHandle, task_id: i64) -> Result<(), String>
     Ok(())
 }
 
+/// Missed repeats come forward before the poll compares anything: a ritual is
+/// a place a task returns to, and a place does not stay on last Thursday. A
+/// slot keeps its day until that day is over - a missed 8:00 still belongs on
+/// today's calendar - and rolls on the first pass after midnight, landing on
+/// the next day its mask allows.
+///
+/// Google is written first, the local slot second. The poll's moved-branch
+/// trusts Google's time for a linked event, so a local write that outran a
+/// failed patch would be dragged straight back on the same pass; a row whose
+/// patch fails is simply left for the next poll instead.
+fn roll_past_repeats(app: &AppHandle, client: &Client) -> bool {
+    let today = slot::day_start(Local::now());
+    let rows = {
+        let db = app.state::<Db>();
+        let Ok(conn) = db.0.lock() else { return false };
+        tasks::stale_repeats(&conn, today.timestamp()).unwrap_or_default()
+    };
+    let mut moved = false;
+    for row in rows {
+        let Some(anchor) = Local.timestamp_opt(row.scheduled_ts, 0).single() else {
+            continue;
+        };
+        let days = super::repeat::day_mask(&row.repeat_days);
+        let Some(next) = super::repeat::roll_forward(anchor, days, today.date_naive()) else {
+            continue;
+        };
+        let rolled = match row.calendar_event_id.as_deref() {
+            Some(id) => match client.patch_event(id, next, next + SLOT) {
+                Ok(()) => {
+                    let db = app.state::<Db>();
+                    let Ok(conn) = db.0.lock() else { continue };
+                    tasks::set_schedule(&conn, row.id, Some(next.timestamp()), Some(id), None)
+                        .is_ok()
+                }
+                Err(err) => {
+                    crate::log::line(&format!(
+                        "calendar: could not roll \"{}\" forward ({err})",
+                        row.title
+                    ));
+                    false
+                }
+            },
+            // Scheduled while offline, so there is no event to move: make one
+            // where the task belongs now.
+            None => create_event_at(app, client, row.id, &row.title, next).is_ok(),
+        };
+        moved |= rolled;
+    }
+    moved
+}
+
 /// One reconciliation pass: pull the app's events from Google and apply what
 /// changed. Moved → update the slot; cancelled → clear the link (card shows
 /// "no date", never silently re-created); an event whose task is no longer
@@ -294,6 +345,9 @@ pub fn poll_once(app: &AppHandle) -> Result<String, String> {
         return Ok("Not connected".into());
     }
     let client = Client::authed(app)?;
+    // Before listing, so the listing already sees rolled events where they
+    // now belong and the moved-branch finds nothing to disagree with.
+    let rolled = roll_past_repeats(app, &client);
     let token = super::api::sync_token(app);
     let (items, next) = match client.list_task_events(token.as_deref()) {
         Ok(pair) => pair,
@@ -304,7 +358,7 @@ pub fn poll_once(app: &AppHandle) -> Result<String, String> {
         Err(e) => return Err(e),
     };
 
-    let mut changed = false;
+    let mut changed = rolled;
     for item in &items {
         let Some(task_id) = item.task_id else { continue };
         let db = app.state::<Db>();
@@ -349,8 +403,14 @@ pub fn poll_once(app: &AppHandle) -> Result<String, String> {
 
     super::api::save_sync_token(app, next.as_deref());
     set_status(app, "Synced");
+    // The busy strip can change without any task changing: an event added
+    // straight in Google never appears in the listing above, which reads only
+    // this app's own events. Every successful pass therefore retires the week
+    // cache and tells the strip, so a foreign event is at most one poll away
+    // from the screen - previously nothing on this path ever refreshed it.
+    super::week::invalidate(app);
+    let _ = app.emit("week-changed", ());
     if changed {
-        super::week::invalidate(app);
         let _ = app.emit("tasks-changed", ());
     }
     Ok("Synced".into())

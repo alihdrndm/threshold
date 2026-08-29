@@ -203,7 +203,7 @@ export function Ritual({ trigger }: { trigger: string }) {
         )}
 
         {step === "arrival" && (
-          <Step stepKey="arrival">
+          <Step key="arrival" stepKey="arrival">
             <div
               aria-hidden
               className="ritual-breath h-24 w-24 rounded-full border border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
@@ -222,7 +222,7 @@ export function Ritual({ trigger }: { trigger: string }) {
         )}
 
         {step === "intention" && (
-          <Step stepKey="intention">
+          <Step key="intention" stepKey="intention">
             <Eyebrow>Intention</Eyebrow>
             <Question>{theme.copy.intentionPrompt}</Question>
 
@@ -278,7 +278,7 @@ export function Ritual({ trigger }: { trigger: string }) {
         )}
 
         {step === "prediction" && (
-          <Step stepKey="prediction">
+          <Step key="prediction" stepKey="prediction">
             <Eyebrow>Prediction</Eyebrow>
             {/* Phrased as a prediction, not an intention: the question-behaviour
                 effect is strongest in this form, and strongest via a screen. */}
@@ -310,7 +310,7 @@ export function Ritual({ trigger }: { trigger: string }) {
         )}
 
         {step === "ifthen" && (
-          <Step stepKey="ifthen">
+          <Step key="ifthen" stepKey="ifthen">
             <Eyebrow>Plan</Eyebrow>
             <Question>{theme.copy.ifThenPrompt}</Question>
             <div className="flex w-full flex-col items-center gap-3">
@@ -339,7 +339,7 @@ export function Ritual({ trigger }: { trigger: string }) {
         )}
 
         {step === "commit" && (
-          <Step stepKey="commit">
+          <Step key="commit" stepKey="commit">
             <Eyebrow>Commitment</Eyebrow>
             <Question>{theme.copy.durationPrompt}</Question>
 
@@ -395,7 +395,7 @@ export function Ritual({ trigger }: { trigger: string }) {
         )}
 
         {step === "confirm" && (
-          <Step stepKey="confirm">
+          <Step key="confirm" stepKey="confirm">
             {/* Deliberately flat. Celebrating a stated intention licenses the
                 scroll that follows it. */}
             <Question>Intention set.</Question>
@@ -416,7 +416,7 @@ export function Ritual({ trigger }: { trigger: string }) {
         )}
 
         {step === "browsing" && (
-          <Step stepKey="browsing">
+          <Step key="browsing" stepKey="browsing">
             <Question>Will you keep it under thirty minutes?</Question>
             {/* Same reasoning as the prediction step: an unfocused pair keeps
                 the answer the user's own. */}

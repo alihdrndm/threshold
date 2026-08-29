@@ -72,10 +72,16 @@ export function apply(next: Resolved): void {
   root.dataset.appearance = next;
 
   // Two frames: one for the attribute to take effect, one for the styles it
-  // changed to be committed.
+  // changed to be committed. WebView2 suspends rAF in hidden windows, so a
+  // switch applied while the dashboard is hidden would otherwise leave every
+  // transition disabled until the next paint - the timeout is the deadline
+  // that cannot be throttled (the DayModal close uses the same defence).
+  const clear = () => delete root.dataset.appearanceSwitching;
+  const deadline = window.setTimeout(clear, 100);
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      delete root.dataset.appearanceSwitching;
+      window.clearTimeout(deadline);
+      clear();
     });
   });
 }

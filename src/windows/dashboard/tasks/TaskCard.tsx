@@ -92,7 +92,7 @@ export function TaskCard({
         onClick={() => onToggleDone(task)}
         aria-label={done ? "Mark as not done" : "Mark as done"}
         className={clsx(
-          "mt-1 grid size-[18px] shrink-0 place-items-center rounded-full border transition duration-150 active:scale-90",
+          "mt-1 grid size-[18px] shrink-0 place-items-center rounded-full border transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97]",
           done
             ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20"
             : // Muted ink at 50% measures 2.11:1 on a Do First card — under the
@@ -197,7 +197,7 @@ export function TaskCard({
           type="button"
           onClick={() => onDelete(task)}
           aria-label={`Delete "${task.title}"`}
-          className="grid size-6 shrink-0 place-items-center rounded-full text-[color-mix(in_srgb,var(--zone-ink-muted)_75%,transparent)] transition duration-150 hover:bg-[color-mix(in_srgb,var(--color-ink)_8%,transparent)] hover:text-[var(--color-ink)] active:scale-90"
+          className="grid size-6 shrink-0 place-items-center rounded-full text-[color-mix(in_srgb,var(--zone-ink-muted)_75%,transparent)] transition-[color,background-color,transform] duration-150 hover:bg-[color-mix(in_srgb,var(--color-ink)_8%,transparent)] hover:text-[var(--color-ink)] active:scale-[0.97]"
         >
           <svg viewBox="0 0 12 12" className="size-3" aria-hidden>
             <path
