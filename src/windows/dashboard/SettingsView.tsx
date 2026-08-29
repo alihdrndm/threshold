@@ -223,31 +223,39 @@ export function SettingsView({
           value={values.remind_before_min ?? "10"}
           onChange={(v) => void update("remind_before_min", v)}
         />
-        <div
-          role="radiogroup"
-          aria-label="Reminder sound"
-          className="flex flex-wrap gap-2"
-        >
-          {(["on", "off"] as const).map((option) => {
-            const on = (values.reminder_sound ?? "on") === option;
-            return (
-              <button
-                key={option}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                onClick={() => void update("reminder_sound", option)}
-                className={clsx(
-                  "ritual-pressable rounded-full border px-4 py-2 text-sm capitalize",
-                  on
-                    ? "border-[var(--color-accent)] text-[var(--color-ink)]"
-                    : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
-                )}
-              >
-                {option}
-              </button>
-            );
-          })}
+        {/* Labelled in the row, not just for screen readers: two unlabelled
+            pills under the minutes field read as an off switch for the whole
+            feature, which zero already is. */}
+        <div className="flex items-center justify-between gap-4 text-sm">
+          <span className="text-[var(--color-ink-muted)]">
+            Chime when it appears
+          </span>
+          <div
+            role="radiogroup"
+            aria-label="Chime when it appears"
+            className="flex flex-wrap gap-2"
+          >
+            {(["on", "off"] as const).map((option) => {
+              const on = (values.reminder_sound ?? "on") === option;
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => void update("reminder_sound", option)}
+                  className={clsx(
+                    "ritual-pressable rounded-full border px-4 py-2 text-sm capitalize",
+                    on
+                      ? "border-[var(--color-accent)] text-[var(--color-ink)]"
+                      : "border-[var(--color-border-subtle)] text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]",
+                  )}
+                >
+                  {option}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </Section>
 
