@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
 import {
   calendarStatus,
+  calendarSyncNow,
   calendarWeek,
   listTasks,
   type CalendarWeek,
@@ -47,6 +48,16 @@ function clockTime(ts: number): string {
   });
 }
 
+/** How the last sync reads in the legend: recent in minutes, older by clock.
+ * Ages with the strip's own 60 s tick; empty until a first sync is known. */
+function syncedLabel(ts: number | null, now: number): string {
+  if (ts === null) return "";
+  const mins = Math.floor((now - ts) / 60);
+  if (mins < 1) return "synced just now";
+  if (mins < 60) return `synced ${mins} min ago`;
+  return `synced at ${clockTime(ts)}`;
+}
+
 export function WeekView({ tasks }: { tasks?: Task[] }) {
   const [data, setData] = useState<CalendarWeek | null>(null);
   // null = not asked yet; the invite only shows once we know.
@@ -61,6 +72,24 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
     dayStart: number;
     rect: DOMRect;
   } | null>(null);
+  const [lastSync, setLastSync] = useState<number | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  /** The same verb Settings uses, so the flow keeps one name throughout. */
+  const syncNow = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      await calendarSyncNow();
+      // The pass emits week-changed too; this just makes the click's own
+      // result deterministic rather than waiting on the event.
+      await refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const needOwnTasks = tasks === undefined;
 
@@ -68,6 +97,7 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
     try {
       const status = await calendarStatus();
       setConnected(status.connected);
+      setLastSync(status.lastSyncTs);
       if (!status.connected) return;
       const [week, list] = await Promise.all([
         calendarWeek(),
@@ -336,6 +366,23 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
             Nothing booked in the coming week.
           </span>
         )}
+        {/* The strip's own sync, at the strip's own volume. Same name as the
+            Settings button - one action, one name, wherever it appears. The
+            status sits beside the control it describes; failures use the
+            banner above like every other calendar error. */}
+        <span className="ml-auto flex items-center gap-2.5">
+          <span aria-live="polite">
+            {syncing ? "syncing…" : syncedLabel(lastSync, now)}
+          </span>
+          <button
+            type="button"
+            onClick={() => void syncNow()}
+            disabled={syncing}
+            className="ritual-exit rounded-full uppercase tracking-[0.14em] disabled:opacity-50"
+          >
+            sync now
+          </button>
+        </span>
       </p>
     </section>
   );
