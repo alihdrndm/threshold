@@ -87,6 +87,10 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
   useEffect(() => {
     void refetch();
     const unlisten = listen("tasks-changed", () => void refetch());
+    // The poller retires the busy cache after every pass and says so here.
+    // This is the only road a foreign Google event has onto the strip: it
+    // changes no tasks, so tasks-changed never fires for it.
+    const unlistenWeek = listen("week-changed", () => void refetch());
     // Coming back to the window after a while is when the week most likely
     // changed elsewhere; same 30 s throttle the tasks board uses.
     const onFocus = () => {
@@ -102,6 +106,7 @@ export function WeekView({ tasks }: { tasks?: Task[] }) {
     );
     return () => {
       void unlisten.then((off) => off());
+      void unlistenWeek.then((off) => off());
       window.removeEventListener("focus", onFocus);
       window.clearInterval(tick);
     };

@@ -403,8 +403,14 @@ pub fn poll_once(app: &AppHandle) -> Result<String, String> {
 
     super::api::save_sync_token(app, next.as_deref());
     set_status(app, "Synced");
+    // The busy strip can change without any task changing: an event added
+    // straight in Google never appears in the listing above, which reads only
+    // this app's own events. Every successful pass therefore retires the week
+    // cache and tells the strip, so a foreign event is at most one poll away
+    // from the screen - previously nothing on this path ever refreshed it.
+    super::week::invalidate(app);
+    let _ = app.emit("week-changed", ());
     if changed {
-        super::week::invalidate(app);
         let _ = app.emit("tasks-changed", ());
     }
     Ok("Synced".into())
