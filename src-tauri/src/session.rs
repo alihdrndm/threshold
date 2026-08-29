@@ -465,6 +465,7 @@ pub fn spawn_expiry_watcher(app: tauri::AppHandle) {
 
                 let session_seconds = advance_sessions(&app);
                 offer_checkin(&app);
+                crate::reminder::offer(&app);
 
                 match active_lock() {
                     Some(lock) if seconds_remaining(&lock) == 0 => {

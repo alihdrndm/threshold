@@ -7,6 +7,7 @@ pub mod diagnostics;
 mod log;
 mod pause;
 mod popup;
+mod reminder;
 mod session;
 mod startup;
 mod tray;
@@ -94,6 +95,8 @@ pub fn run() {
             commands::open_url,
             commands::calendar_week,
             commands::dismiss_checkin,
+            commands::snooze_reminder,
+            commands::dismiss_reminder,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -158,7 +161,8 @@ pub fn run() {
                 // session would then owe a question with nowhere to ask it.
                 let transient = window.label().starts_with(popup::POPUP_LABEL)
                     || window.label() == checkin::LABEL
-                    || window.label() == blocked::LABEL;
+                    || window.label() == blocked::LABEL
+                    || window.label() == reminder::LABEL;
                 if !transient {
                     api.prevent_close();
                     let _ = window.hide();
