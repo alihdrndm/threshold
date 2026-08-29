@@ -137,9 +137,15 @@ export function ReminderWindow() {
   return (
     <motion.main
       className="checkin-card flex h-full flex-col justify-between gap-4 p-6 text-[var(--color-ink)]"
-      initial={reduce ? false : { opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ type: "spring", duration: 0.45, bounce: 0 }}
+      // Full transform string (the shorthands run on the main thread and drop
+      // frames under load - Shell.tsx's rule), the house ease-out at an
+      // entrance's pace, and reduced motion keeps the fade: the rise is the
+      // movement, the fade is the comprehension.
+      initial={
+        reduce ? { opacity: 0 } : { opacity: 0, transform: "translateY(8px)" }
+      }
+      animate={{ opacity: 1, transform: "translateY(0px)" }}
+      transition={{ duration: 0.26, ease: [0.23, 1, 0.32, 1] }}
     >
       <div className="flex flex-col gap-1.5">
         <button
