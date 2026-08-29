@@ -68,6 +68,11 @@ export function DayModal({
   const closeButton = useRef<HTMLButtonElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [leaving, setLeaving] = useState(false);
+  // The arrival, kept so a close caught mid-flight can reverse it from where
+  // the card actually is; and a plain guard so close runs its side effects
+  // once (an updater function must stay pure - React may replay it).
+  const openAnim = useRef<Animation | null>(null);
+  const closing = useRef(false);
   const now = Math.floor(Date.now() / 1000);
 
   const detail = useMemo(
@@ -80,13 +85,16 @@ export function DayModal({
   const date = new Date(dayStart * 1000);
   const isToday = new Date(now * 1000).toDateString() === date.toDateString();
 
-  // The morph in: from the clicked column's rectangle to rest.
+  // The morph in: from the clicked column's rectangle to rest. The compositor
+  // layer lives only as long as the travel does - a held layer would carry
+  // the card's whole scrolling timeline for as long as the day stays open.
   useLayoutEffect(() => {
     const el = card.current;
     if (!el || !from || reducedMotion()) return;
     const to = el.getBoundingClientRect();
     if (to.width === 0 || to.height === 0) return;
-    el.animate(
+    el.style.willChange = "transform";
+    const anim = el.animate(
       [
         {
           transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`,
@@ -95,17 +103,34 @@ export function DayModal({
       ],
       { duration: OPEN_MS, easing: EASE },
     );
+    openAnim.current = anim;
+    const settled = () => {
+      el.style.willChange = "";
+      if (openAnim.current === anim) openAnim.current = null;
+    };
+    anim.finished.then(settled).catch(settled);
   }, [from]);
 
   const close = useCallback(() => {
-    setLeaving((already) => {
-      if (already) return already;
-      const el = card.current;
-      if (!el || !from || reducedMotion()) {
-        // The fade alone: let the scrim/content keyframes play out.
-        window.setTimeout(onClose, reducedMotion() ? 120 : 0);
-        return true;
-      }
+    if (closing.current) return;
+    closing.current = true;
+    setLeaving(true);
+    const el = card.current;
+    if (!el || !from || reducedMotion()) {
+      // The fade alone - and the full 200ms of it, so the scrim's own exit
+      // is not cut off for exactly the users who asked for gentler.
+      window.setTimeout(onClose, reducedMotion() ? CLOSE_MS : 0);
+      return;
+    }
+    el.style.willChange = "transform";
+    const arriving = openAnim.current;
+    if (arriving && arriving.playState === "running") {
+      // Caught mid-arrival: retarget from where the card actually is, not
+      // from where it would have ended - reversing the open is exactly that,
+      // and it cannot snap.
+      arriving.reverse();
+      arriving.finished.then(onClose).catch(() => onClose());
+    } else {
       const to = el.getBoundingClientRect();
       const anim = el.animate(
         [
@@ -118,11 +143,11 @@ export function DayModal({
         { duration: CLOSE_MS, easing: EASE, fill: "forwards" },
       );
       anim.finished.then(onClose).catch(() => onClose());
-      // A suspended animation timeline (hidden window) must not strand the
-      // modal: the deadline closes it whether or not the travel played.
-      window.setTimeout(onClose, CLOSE_MS + 120);
-      return true;
-    });
+    }
+    // A suspended animation timeline (hidden window) must not strand the
+    // modal: the deadline closes it whether or not the travel played. It also
+    // covers a reversed arrival, whose remaining time never exceeds OPEN_MS.
+    window.setTimeout(onClose, OPEN_MS + 120);
   }, [from, onClose]);
 
   // Escape leaves; the close control takes focus on arrival so the keyboard
@@ -202,7 +227,7 @@ export function DayModal({
               type="button"
               onClick={close}
               aria-label="Close"
-              className="ml-auto grid h-7 w-7 place-items-center rounded-full text-[var(--color-ink-muted)] transition-colors duration-100 hover:bg-[var(--color-fill-selected)] hover:text-[var(--color-ink)] active:scale-95"
+              className="ml-auto grid h-7 w-7 place-items-center rounded-full text-[var(--color-ink-muted)] transition-[color,background-color,transform] duration-100 hover:bg-[var(--color-fill-selected)] hover:text-[var(--color-ink)] active:scale-[0.97]"
             >
               ×
             </button>

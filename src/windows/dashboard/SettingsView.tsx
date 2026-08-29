@@ -855,7 +855,7 @@ function AreaList() {
               type="button"
               onClick={() => attempt(() => removeContext(area.id))}
               aria-label={`Remove ${area.name}`}
-              className="grid size-6 place-items-center rounded-full text-[var(--color-ink-muted)] transition duration-150 hover:bg-[var(--color-fill-selected)] hover:text-[var(--color-ink)] active:scale-90"
+              className="grid size-6 place-items-center rounded-full text-[var(--color-ink-muted)] transition-[color,background-color,transform] duration-150 hover:bg-[var(--color-fill-selected)] hover:text-[var(--color-ink)] active:scale-[0.97]"
             >
               ×
             </button>

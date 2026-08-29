@@ -19,6 +19,13 @@
      watching most closely. */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
+  /* Every bare Tailwind `transition`/`duration-*` utility inherits these, so
+     the utility layer speaks with the same accent as the hand-written rules
+     below. Without them, Tailwind's default is a weak symmetric curve whose
+     first half is the ease-in the comment above forbids. */
+  --default-transition-timing-function: var(--ease-out);
+  --default-transition-duration: 150ms;
 }
 
 /* Native chrome — scrollbars, the range track, number spinners, the caret —
@@ -275,6 +282,16 @@ textarea {
   transform: scale(0.97);
 }
 
+/* Keyboard focus is visible everywhere a pointer press is - the ring the
+   ritual's own buttons already wear, promoted to the shared classes so the
+   dashboard's pressables stop falling back to the UA default. */
+.ritual-pressable:focus-visible,
+.ritual-exit:focus-visible,
+.week-day-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
 .ritual-field {
   transition:
     background-color 160ms ease,
@@ -425,10 +442,20 @@ textarea {
   animation: banner-in 180ms var(--ease-out) both;
 }
 
-/* The delete notice enters like the banner does: a fade, no rise, and its
-   removal is instant — nothing is faster than gone. */
+/* The delete notice enters like the banner does: a fade, no rise. Removal
+   the user asked for (Undo pressed, a new notice replacing it) is instant —
+   nothing is faster than gone - but the 6s self-dismissal fades, because a
+   line vanishing mid-read that nobody touched reads as a fault. */
 .matrix-notice {
   animation: banner-in 200ms var(--ease-out) both;
+}
+.matrix-notice[data-leaving] {
+  animation: notice-out 180ms var(--ease-out) both;
+}
+@keyframes notice-out {
+  to {
+    opacity: 0;
+  }
 }
 
 /* A card held over an area chip: the zone's own drag ring at chip scale, so
@@ -447,6 +474,10 @@ textarea {
 }
 [role="listbox"].area-menu {
   transform-origin: top left;
+  /* The completions appear mid-keystroke, summoned by typing `#` - a
+     keyboard path, repeated constantly. Keyboard-initiated UI never
+     animates; the scale-in stays on the click-opened menus only. */
+  animation: none;
 }
 @keyframes area-menu-in {
   from {
@@ -522,7 +553,9 @@ textarea {
 @keyframes slot-dot-in {
   from {
     opacity: 0;
-    transform: scale(0.5);
+    /* From nearly its final size, like every other entrance here - the
+       opacity and the glow carry the arrival, not a pop from half-scale. */
+    transform: scale(0.9);
   }
   to {
     opacity: 1;
@@ -538,6 +571,12 @@ textarea {
    capped so a full calendar never feels slower than an empty one. */
 .week-panel {
   animation: week-in 160ms var(--ease-out) both;
+}
+/* The day's first completion builds this section at the foot of the board.
+   It arrives the way the week panel does - the file's word for "a panel
+   arrived" - instead of materialising fully formed. Once a day, by nature. */
+.matrix-zone[data-zone="done"] {
+  animation: week-in 200ms var(--ease-out) both;
 }
 @keyframes week-in {
   from {
@@ -654,7 +693,9 @@ textarea {
 }
 .day-modal {
   transform-origin: top left;
-  will-change: transform;
+  /* will-change is set from JS for exactly the travel's duration - held
+     here it would pin a compositor layer under the card's whole scrolling
+     timeline for as long as the day stays open. */
 }
 .day-modal-content {
   animation: day-content-in 180ms var(--ease-out) 90ms both;
@@ -922,9 +963,25 @@ textarea {
   .ritual-glow {
     animation: none;
   }
+  /* The breath keeps its pacing - that cycle is the instruction - and drops
+     the swelling, which is the vestibular risk. A still ring that merely sits
+     at half opacity would remove the feature, not the motion. */
   .ritual-breath {
-    animation: none;
-    opacity: 0.5;
+    animation: breathe-reduced 3s ease-in-out infinite;
+    transform: scale(0.9);
+  }
+  @keyframes breathe-reduced {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 0.72;
+    }
+  }
+  /* Menus keep their fade and drop the scale. */
+  .area-menu {
+    animation: step-item-reduced 160ms ease both;
   }
   /* Keep the fade — it carries the sense that a step changed — drop the rise. */
   .ritual-step > * {
@@ -969,9 +1026,10 @@ textarea {
     animation: none;
   }
   /* The week keeps its fade and drops the assembly: panel and blocks arrive
-     together, quietly. */
+     together, quietly. Done today arrives the same way. */
   .week-panel,
-  .week-block {
+  .week-block,
+  .matrix-zone[data-zone="done"] {
     animation: step-item-reduced 160ms ease both;
     animation-delay: 0ms;
   }
