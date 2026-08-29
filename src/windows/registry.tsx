@@ -3,6 +3,7 @@ import { BlockedWindow } from "./blocked/BlockedWindow";
 import { CheckInWindow } from "./checkin/CheckInWindow";
 import { DashboardWindow } from "./dashboard/DashboardWindow";
 import { PopupWindow } from "./popup/PopupWindow";
+import { ReminderWindow } from "./reminder/ReminderWindow";
 
 /**
  * One bundle serves every window. Rust creates windows with a label
@@ -15,6 +16,7 @@ import { PopupWindow } from "./popup/PopupWindow";
 const WINDOWS: Record<string, () => JSX.Element | null> = {
   main: DashboardWindow,
   checkin: CheckInWindow,
+  reminder: ReminderWindow,
   // Missing entries fall through to the dashboard below, which would render the
   // whole thing inside a 420px corner window rather than failing visibly.
   blocked: BlockedWindow,

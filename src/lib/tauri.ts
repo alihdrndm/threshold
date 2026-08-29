@@ -298,6 +298,24 @@ export function setTaskRepeat(id: number, days: string | null): Promise<void> {
   return invoke<void>("set_task_repeat", { id, days });
 }
 
+/**
+ * Put the reminder off for a few minutes. Defers the knock, never the task:
+ * the slot and its calendar event stay where they are.
+ */
+export function snoozeReminder(taskId: number, minutes: number): Promise<void> {
+  return invoke<void>("snooze_reminder", { taskId, minutes });
+}
+
+/** Acknowledge the reminder; this occurrence will not knock again. */
+export function dismissReminder(taskId: number): Promise<void> {
+  return invoke<void>("dismiss_reminder", { taskId });
+}
+
+/** Bring the dashboard up - the reminder's "show me the task". */
+export function openDashboard(): Promise<void> {
+  return invoke<void>("open_dashboard");
+}
+
 export interface CalendarStatus {
   connected: boolean;
   lastSyncTs: number | null;
