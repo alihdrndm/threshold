@@ -102,7 +102,12 @@ fn create_event_at(
     title: &str,
     start: chrono::DateTime<Local>,
 ) -> Result<(), String> {
-    let event = client.insert_event(task_id, title, start, start + SLOT)?;
+    let uid = {
+        let db = app.state::<Db>();
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        super::board::uid_of(&conn, task_id)
+    };
+    let event = client.insert_event(task_id, uid.as_deref(), title, start, start + SLOT)?;
     {
         let db = app.state::<Db>();
         let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
@@ -360,21 +365,49 @@ pub fn poll_once(app: &AppHandle) -> Result<String, String> {
 
     let mut changed = rolled;
     for item in &items {
-        let Some(task_id) = item.task_id else { continue };
         let db = app.state::<Db>();
-        let (linked, in_schedule, open) = {
+        // Resolve by uid first: rowids collide between devices, and mobile's
+        // events carry its own rowid in the legacy field. An event whose uid
+        // matches no local task belongs to a record the board channel has not
+        // delivered yet - leave it alone.
+        let resolved = {
+            let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+            super::board::resolve_event_task(&conn, item.task_id, item.task_uid.as_deref())
+        };
+        let Some(task_id) = resolved else { continue };
+        let (linked, unlinked_free, in_schedule, open, uid) = {
             let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
             match tasks::by_id(&conn, task_id)? {
                 Some(t) => (
                     t.calendar_event_id.as_deref() == Some(item.id.as_str()),
+                    t.calendar_event_id.is_none(),
                     t.urgent == Some(false) && t.important == Some(true),
                     t.status == "open",
+                    super::board::uid_of(&conn, task_id),
                 ),
-                None => (false, false, false),
+                None => (false, false, false, false, None),
             }
         };
+        // A task that arrived through the board channel with no local event:
+        // this event, made by the device that scheduled it, is its slot here
+        // too. Learn the link instead of ignoring it.
+        if unlinked_free && in_schedule && open && !item.cancelled {
+            if item.task_uid.is_some() && item.task_uid.as_deref() == uid.as_deref() {
+                let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+                tasks::set_schedule(&conn, task_id, item.start_ts, Some(&item.id), None)?;
+                changed = true;
+                continue;
+            }
+        }
         if !linked {
             continue;
+        }
+        // An event from before the board channel: stamp the uid onto it so
+        // every other device can tie it to the same task.
+        if item.task_uid.is_none() {
+            if let Some(uid) = uid.as_deref() {
+                let _ = client.claim_event_uid(&item.id, uid);
+            }
         }
         if item.cancelled {
             let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
@@ -402,7 +435,22 @@ pub fn poll_once(app: &AppHandle) -> Result<String, String> {
     }
 
     super::api::save_sync_token(app, next.as_deref());
-    set_status(app, "Synced");
+
+    // Channel 2 rides the same pass and the same token. Its failures never
+    // fail the calendar's work - they land in the status line like any other.
+    let mut status_msg = "Synced".to_string();
+    match super::board::sync_board(app, &client) {
+        Ok(board_changed) => changed |= board_changed,
+        Err(err) if err == "BOARD_SCOPE" => {
+            status_msg =
+                "Reconnect Google to sync the board (a one-time new permission)".into();
+        }
+        Err(err) => {
+            crate::log::line(&format!("board: {err}"));
+            status_msg = format!("Board sync: {err}");
+        }
+    }
+    set_status(app, &status_msg);
     // The busy strip can change without any task changing: an event added
     // straight in Google never appears in the listing above, which reads only
     // this app's own events. Every successful pass therefore retires the week
@@ -413,7 +461,7 @@ pub fn poll_once(app: &AppHandle) -> Result<String, String> {
     if changed {
         let _ = app.emit("tasks-changed", ());
     }
-    Ok("Synced".into())
+    Ok(status_msg)
 }
 
 /// Ask the poller to run its next pass now (from a wake, or "Sync now").

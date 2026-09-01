@@ -30,8 +30,13 @@ use crate::db::{self, Db};
 const AUTH: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN: &str = "https://oauth2.googleapis.com/token";
 const REVOKE: &str = "https://oauth2.googleapis.com/revoke";
+// `datastore` is the board channel: the whole matrix syncs through a
+// Firestore database in the user's own Cloud project. A token granted
+// before this scope existed simply 403s on Firestore - calendar sync is
+// untouched - until the user reconnects once.
 const SCOPES: &str = "https://www.googleapis.com/auth/calendar.events \
-                      https://www.googleapis.com/auth/calendar.freebusy";
+                      https://www.googleapis.com/auth/calendar.freebusy \
+                      https://www.googleapis.com/auth/datastore";
 
 /// base64url without padding, as PKCE and OAuth state both want.
 fn b64url(bytes: &[u8]) -> String {
