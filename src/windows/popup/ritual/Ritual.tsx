@@ -376,6 +376,27 @@ export function Ritual({ trigger }: { trigger: string }) {
               </div>
             )}
 
+            {/* Self-set limits are the ones people keep: any number of
+                minutes, whatever presets the day's theme offers. */}
+            <label className="flex items-center gap-2 text-sm text-[var(--color-ink-muted)]">
+              or exactly
+              <input
+                type="number"
+                min={1}
+                max={MAX_DURATION}
+                placeholder="min"
+                onChange={(event) => {
+                  const n = Number(event.target.value);
+                  if (Number.isFinite(n) && n >= 1) {
+                    setDuration(Math.min(Math.round(n), MAX_DURATION));
+                  }
+                }}
+                aria-label="Custom session length in minutes"
+                className="w-16 rounded-none border-0 border-b border-[var(--color-border-subtle)] bg-transparent px-1 py-0.5 text-center text-[var(--color-ink)] outline-none focus:border-[var(--color-accent)]"
+              />
+              minutes
+            </label>
+
             <div className="flex w-full flex-col items-center gap-3">
               <Hint>{EXPRESS.categories}</Hint>
               <div className="flex flex-wrap justify-center gap-2">
