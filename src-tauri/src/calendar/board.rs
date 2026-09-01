@@ -19,7 +19,7 @@
 
 use rusqlite::OptionalExtension;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::api::Client;
 use crate::db::{self, tasks, Db};
@@ -748,6 +748,11 @@ fn pull_delta(app: &AppHandle, client: &Client, base: &str) -> Result<bool, Stri
                     &remote_quotes_ts.to_string(),
                 );
                 let _ = db::set_setting(&conn, "board_quotes_dirty", "0");
+                drop(conn);
+                // An open Settings window renders the reservoir it fetched
+                // at mount; without this it shows yesterday's list while
+                // the database already moved on.
+                let _ = app.emit("quotes-changed", ());
             }
         }
     }

@@ -83,6 +83,13 @@ export function SettingsView({
 
   useEffect(() => {
     void refresh();
+    // The board channel can rewrite the reservoir (a quote added on the
+    // phone) while this window sits open; re-read when it says so.
+    const unlisten = listen("quotes-changed", () => void refresh());
+    return () => {
+      void unlisten.then((stop) => stop());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function update(key: string, value: string) {
