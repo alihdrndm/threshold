@@ -317,10 +317,15 @@ fn push_dirty(app: &AppHandle, client: &Client, base: &str) -> Result<(), String
             "areas": { "arrayValue": { "values": values } },
             "updatedTs": iv(now),
         }});
+        // updateMask, not full replace: quotes share this document under
+        // their own clock, and an unmasked PATCH would erase them.
         send(
             client
                 .http
-                .patch(format!("{base}/boards/main"))
+                .patch(format!(
+                    "{base}/boards/main?updateMask.fieldPaths=schemaV\
+                     &updateMask.fieldPaths=areas&updateMask.fieldPaths=updatedTs"
+                ))
                 .bearer_auth(&client.access)
                 .json(&body),
             "areas push",
@@ -329,6 +334,70 @@ fn push_dirty(app: &AppHandle, client: &Client, base: &str) -> Result<(), String
         let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
         let _ = db::set_setting(&conn, "board_areas_ts", &now.to_string());
         let _ = db::set_setting(&conn, "board_areas_dirty", "0");
+    }
+
+    // The quote reservoir, on its own clock.
+    let quotes_dirty = {
+        let db = app.state::<Db>();
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        db::get_setting(&conn, "board_quotes_dirty").as_deref() == Some("1")
+    };
+    if quotes_dirty {
+        let (rows, clock) = {
+            let db = app.state::<Db>();
+            let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+            let mut stmt = conn
+                .prepare("SELECT text, author, created_ts FROM quotes ORDER BY id")
+                .map_err(|err| format!("could not read quotes: {err}"))?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                })
+                .map_err(|err| format!("could not read quotes: {err}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|err| format!("could not read quotes: {err}"))?;
+            let clock = db::get_setting(&conn, "quotes_updated_ts")
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or_else(|| chrono::Utc::now().timestamp());
+            (rows, clock)
+        };
+        let values: Vec<Value> = rows
+            .iter()
+            .map(|(text, author, created)| {
+                let mut fields = serde_json::Map::new();
+                fields.insert("text".into(), sv(text));
+                if let Some(author) = author {
+                    fields.insert("author".into(), sv(author));
+                }
+                fields.insert(
+                    "createdTs".into(),
+                    sv(created.as_deref().unwrap_or("")),
+                );
+                json!({ "mapValue": { "fields": fields } })
+            })
+            .collect();
+        let body = json!({ "fields": {
+            "quotes": { "arrayValue": { "values": values } },
+            "quotesUpdatedTs": iv(clock),
+        }});
+        send(
+            client
+                .http
+                .patch(format!(
+                    "{base}/boards/main?updateMask.fieldPaths=quotes\
+                     &updateMask.fieldPaths=quotesUpdatedTs"
+                ))
+                .bearer_auth(&client.access)
+                .json(&body),
+            "quotes push",
+        )?;
+        let db = app.state::<Db>();
+        let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+        let _ = db::set_setting(&conn, "board_quotes_dirty", "0");
     }
     Ok(())
 }
@@ -629,6 +698,56 @@ fn pull_delta(app: &AppHandle, client: &Client, base: &str) -> Result<bool, Stri
                 }
                 apply_areas(app, &areas, remote_ts)?;
                 changed = true;
+            }
+            // The quote reservoir, LWW on its own clock. Whole-list: the
+            // newer reservoir replaces the older one.
+            let remote_quotes_ts = field_int(fields, "quotesUpdatedTs").unwrap_or(0);
+            let local_quotes_ts: i64 = {
+                let db = app.state::<Db>();
+                let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+                db::get_setting(&conn, "quotes_updated_ts")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0)
+            };
+            if remote_quotes_ts > local_quotes_ts {
+                let mut incoming = Vec::new();
+                if let Some(values) = fields
+                    .get("quotes")
+                    .and_then(|a| a.get("arrayValue"))
+                    .and_then(|a| a.get("values"))
+                    .and_then(|v| v.as_array())
+                {
+                    for v in values {
+                        if let Some(f) = v.get("mapValue").and_then(|m| m.get("fields")) {
+                            if let Some(text) = field_str(f, "text") {
+                                incoming.push((
+                                    text,
+                                    field_str(f, "author"),
+                                    field_str(f, "createdTs")
+                                        .filter(|s| !s.is_empty()),
+                                ));
+                            }
+                        }
+                    }
+                }
+                let db = app.state::<Db>();
+                let conn = db.0.lock().map_err(|_| "database lock poisoned")?;
+                let _ = conn.execute("DELETE FROM quotes", []);
+                for (text, author, created) in &incoming {
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO quotes(text, author, created_ts)
+                         VALUES(?1, ?2, COALESCE(?3, datetime('now')))",
+                        rusqlite::params![text, author, created],
+                    );
+                }
+                // The applies above fired the dirty trigger; this change was
+                // remote, so both marks come straight back off.
+                let _ = db::set_setting(
+                    &conn,
+                    "quotes_updated_ts",
+                    &remote_quotes_ts.to_string(),
+                );
+                let _ = db::set_setting(&conn, "board_quotes_dirty", "0");
             }
         }
     }
