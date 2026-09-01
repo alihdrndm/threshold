@@ -100,8 +100,12 @@ impl Client {
         {
             for slot in busy {
                 if let (Some(s), Some(e)) = (
-                    slot.get("start").and_then(|v| v.as_str()).and_then(parse_local),
-                    slot.get("end").and_then(|v| v.as_str()).and_then(parse_local),
+                    slot.get("start")
+                        .and_then(|v| v.as_str())
+                        .and_then(parse_local),
+                    slot.get("end")
+                        .and_then(|v| v.as_str())
+                        .and_then(parse_local),
                 ) {
                     out.push((s, e));
                 }
@@ -149,7 +153,10 @@ impl Client {
             .and_then(|v| v.as_str())
             .ok_or("Google returned an event with no id")?
             .to_string();
-        let html_link = resp.get("htmlLink").and_then(|v| v.as_str()).map(String::from);
+        let html_link = resp
+            .get("htmlLink")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         Ok(EventRef { id, html_link })
     }
 
@@ -216,76 +223,97 @@ impl Client {
         &self,
         sync_token: Option<&str>,
     ) -> Result<(Vec<EventItem>, Option<String>), String> {
-        let mut url = format!("{BASE}/calendars/primary/events?singleEvents=true&showDeleted=true&maxResults=250");
+        let mut base_url = format!(
+            "{BASE}/calendars/primary/events?singleEvents=true&showDeleted=true&maxResults=250"
+        );
         match sync_token {
             Some(tok) if !tok.is_empty() => {
-                url.push_str("&syncToken=");
-                url.push_str(&crate::popup::urlencode(tok));
+                base_url.push_str("&syncToken=");
+                base_url.push_str(&crate::popup::urlencode(tok));
             }
             _ => {
                 // A first sync: only look back a day, forward is unbounded via
                 // the token thereafter.
                 let since = (Utc::now() - chrono::Duration::days(1)).to_rfc3339();
-                url.push_str("&timeMin=");
-                url.push_str(&crate::popup::urlencode(&since));
+                base_url.push_str("&timeMin=");
+                base_url.push_str(&crate::popup::urlencode(&since));
             }
         }
 
-        let resp = self
-            .get(&url)
-            .send()
-            .map_err(|err| format!("could not list events: {err}"))?;
-        if resp.status().as_u16() == 410 {
-            return Err("SYNC_TOKEN_EXPIRED".into());
-        }
-        let value: serde_json::Value = resp
-            .error_for_status()
-            .map_err(|err| format!("event list rejected: {err}"))?
-            .json()
-            .map_err(|err| format!("event list unreadable: {err}"))?;
-
+        // Page until exhausted: a burst past maxResults must not be silently
+        // truncated, and nextSyncToken only appears on the FINAL page - saving
+        // anything earlier would drop the tail of the change set forever.
         let mut items = Vec::new();
-        if let Some(events) = value.get("items").and_then(|v| v.as_array()) {
-            for ev in events {
-                let Some(id) = ev.get("id").and_then(|v| v.as_str()) else { continue };
-                let private = ev
-                    .get("extendedProperties")
-                    .and_then(|e| e.get("private"));
-                let task_id = private
-                    .and_then(|p| p.get("thresholdTaskId"))
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<i64>().ok());
-                let task_uid = private
-                    .and_then(|p| p.get("thresholdTaskUid"))
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                // Only Threshold's events - though a rowid alone no longer
-                // proves whose: another device's rowids collide with ours,
-                // so the poll resolves by uid first when one is present.
-                if task_id.is_none() && task_uid.is_none() {
-                    continue;
-                }
-                let cancelled = ev.get("status").and_then(|v| v.as_str()) == Some("cancelled");
-                let start_ts = ev
-                    .get("start")
-                    .and_then(|s| s.get("dateTime"))
-                    .and_then(|v| v.as_str())
-                    .and_then(parse_local)
-                    .map(|dt| dt.timestamp());
-                items.push(EventItem {
-                    id: id.to_string(),
-                    task_id,
-                    task_uid,
-                    cancelled,
-                    start_ts,
-                });
+        let mut page_token: Option<String> = None;
+        let value = loop {
+            let mut url = base_url.clone();
+            if let Some(tok) = &page_token {
+                url.push_str("&pageToken=");
+                url.push_str(&crate::popup::urlencode(tok));
             }
-        }
+            let resp = self
+                .get(&url)
+                .send()
+                .map_err(|err| format!("could not list events: {err}"))?;
+            if resp.status().as_u16() == 410 {
+                return Err("SYNC_TOKEN_EXPIRED".into());
+            }
+            let value: serde_json::Value = resp
+                .error_for_status()
+                .map_err(|err| format!("event list rejected: {err}"))?
+                .json()
+                .map_err(|err| format!("event list unreadable: {err}"))?;
+            collect_task_events(&value, &mut items);
+            match value.get("nextPageToken").and_then(|v| v.as_str()) {
+                Some(tok) => page_token = Some(tok.to_string()),
+                None => break value,
+            }
+        };
         let next = value
             .get("nextSyncToken")
             .and_then(|v| v.as_str())
             .map(String::from);
         Ok((items, next))
+    }
+}
+
+/// Pull this app's events out of one page of a listing.
+fn collect_task_events(value: &serde_json::Value, items: &mut Vec<EventItem>) {
+    if let Some(events) = value.get("items").and_then(|v| v.as_array()) {
+        for ev in events {
+            let Some(id) = ev.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let private = ev.get("extendedProperties").and_then(|e| e.get("private"));
+            let task_id = private
+                .and_then(|p| p.get("thresholdTaskId"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<i64>().ok());
+            let task_uid = private
+                .and_then(|p| p.get("thresholdTaskUid"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            // Only Threshold's events - though a rowid alone no longer
+            // proves whose: another device's rowids collide with ours,
+            // so the poll resolves by uid first when one is present.
+            if task_id.is_none() && task_uid.is_none() {
+                continue;
+            }
+            let cancelled = ev.get("status").and_then(|v| v.as_str()) == Some("cancelled");
+            let start_ts = ev
+                .get("start")
+                .and_then(|s| s.get("dateTime"))
+                .and_then(|v| v.as_str())
+                .and_then(parse_local)
+                .map(|dt| dt.timestamp());
+            items.push(EventItem {
+                id: id.to_string(),
+                task_id,
+                task_uid,
+                cancelled,
+                start_ts,
+            });
+        }
     }
 }
 
