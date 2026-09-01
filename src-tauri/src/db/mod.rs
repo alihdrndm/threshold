@@ -273,6 +273,104 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("migration 7 failed: {err}"))?;
     }
 
+    if version < 8 {
+        // The board learns to travel. `uid` is the cross-device identity -
+        // rowids collide between machines, UUIDs do not - and `updated_ts` is
+        // the last-writer-wins clock the Firestore channel compares.
+        // `board_dirty` marks rows the next sync pass must push; every row
+        // starts dirty so the first pass ships the whole board.
+        //
+        // The triggers are the stamping mechanism: any REAL change to a field
+        // that travels bumps the clock and marks the row, no matter which
+        // function wrote it. Two guards keep them honest. A write that sets
+        // `updated_ts` itself (applying a remote doc) is left alone - stamping
+        // it would claim the remote edit as ours and echo it back forever.
+        // And per-device bookkeeping (the calendar link, reminder columns) is
+        // deliberately absent from the change test - learning an event id
+        // must not push a doc.
+        //
+        // The uid recipe is a well-formed UUIDv4 from SQLite's own randomblob,
+        // so the backfill and the insert trigger need no application code.
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE tasks ADD COLUMN uid TEXT;
+            ALTER TABLE tasks ADD COLUMN updated_ts INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE tasks ADD COLUMN board_dirty INTEGER NOT NULL DEFAULT 1;
+            UPDATE tasks SET
+                uid = lower(hex(randomblob(4)) || '-' || hex(randomblob(2))
+                      || '-4' || substr(hex(randomblob(2)), 2) || '-'
+                      || substr('89ab', abs(random()) % 4 + 1, 1)
+                      || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6))),
+                updated_ts = strftime('%s','now');
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_uid ON tasks(uid);
+            CREATE TRIGGER IF NOT EXISTS trg_tasks_board_insert
+            AFTER INSERT ON tasks
+            WHEN NEW.uid IS NULL
+            BEGIN
+                UPDATE tasks SET
+                    uid = lower(hex(randomblob(4)) || '-' || hex(randomblob(2))
+                          || '-4' || substr(hex(randomblob(2)), 2) || '-'
+                          || substr('89ab', abs(random()) % 4 + 1, 1)
+                          || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6))),
+                    updated_ts = strftime('%s','now'),
+                    board_dirty = 1
+                WHERE id = NEW.id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_tasks_board_update
+            AFTER UPDATE ON tasks
+            WHEN NEW.updated_ts = OLD.updated_ts AND (
+                NEW.title IS NOT OLD.title OR
+                NEW.note IS NOT OLD.note OR
+                NEW.context_id IS NOT OLD.context_id OR
+                NEW.urgent IS NOT OLD.urgent OR
+                NEW.important IS NOT OLD.important OR
+                NEW.sort_order IS NOT OLD.sort_order OR
+                NEW.status IS NOT OLD.status OR
+                NEW.completed_ts IS NOT OLD.completed_ts OR
+                NEW.scheduled_ts IS NOT OLD.scheduled_ts OR
+                NEW.repeat_days IS NOT OLD.repeat_days
+            )
+            BEGIN
+                UPDATE tasks SET
+                    updated_ts = strftime('%s','now'),
+                    board_dirty = 1
+                WHERE id = NEW.id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_contexts_board_insert
+            AFTER INSERT ON contexts
+            BEGIN
+                INSERT INTO settings(key, value) VALUES('board_areas_dirty','1')
+                ON CONFLICT(key) DO UPDATE SET value = '1';
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_contexts_board_update
+            AFTER UPDATE ON contexts
+            BEGIN
+                INSERT INTO settings(key, value) VALUES('board_areas_dirty','1')
+                ON CONFLICT(key) DO UPDATE SET value = '1';
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_contexts_rename_tasks
+            AFTER UPDATE ON contexts
+            WHEN NEW.name IS NOT OLD.name
+            BEGIN
+                UPDATE tasks SET
+                    updated_ts = strftime('%s','now'),
+                    board_dirty = 1
+                WHERE context_id = NEW.id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_contexts_board_delete
+            AFTER DELETE ON contexts
+            BEGIN
+                INSERT INTO settings(key, value) VALUES('board_areas_dirty','1')
+                ON CONFLICT(key) DO UPDATE SET value = '1';
+            END;
+            PRAGMA user_version = 8;
+            COMMIT;
+            "#,
+        )
+        .map_err(|err| format!("migration 8 failed: {err}"))?;
+    }
+
     Ok(())
 }
 
@@ -374,7 +472,7 @@ mod migration_tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7, "the schema advanced to head");
+        assert_eq!(version, 8, "the schema advanced to head");
 
         // The task is untouched, and the new columns exist and default to NULL.
         let task = tasks::by_id(&conn, 7).unwrap().unwrap();
@@ -423,7 +521,7 @@ mod migration_tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         let task = tasks::by_id(&conn, 3).unwrap().unwrap();
         assert_eq!(task.scheduled_ts, Some(1_700_000_000));
@@ -467,7 +565,7 @@ mod migration_tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         // Existing data untouched; the new columns exist and read as NULL.
         let (fired, snoozed): (Option<i64>, Option<i64>) = conn
@@ -485,6 +583,112 @@ mod migration_tests {
     }
 
     #[test]
+    fn the_board_triggers_stamp_real_changes_and_leave_remote_applies_alone() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let id = tasks::add(
+            &conn,
+            &tasks::NewTask {
+                title: "born local".into(),
+                note: None,
+                context_id: None,
+            },
+        )
+        .unwrap();
+
+        // A fresh local task is minted a uid and marked for the first push.
+        let (uid, dirty): (Option<String>, i64) = conn
+            .query_row(
+                "SELECT uid, board_dirty FROM tasks WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(uid.is_some(), "the insert trigger minted a uid");
+        assert_eq!(dirty, 1);
+
+        // Settle the row, then make a real change: it re-stamps.
+        conn.execute(
+            "UPDATE tasks SET board_dirty = 0, updated_ts = 5 WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+        conn.execute("UPDATE tasks SET title = 'edited' WHERE id = ?1", [id])
+            .unwrap();
+        let (ts, dirty): (i64, i64) = conn
+            .query_row(
+                "SELECT updated_ts, board_dirty FROM tasks WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(ts > 5, "a real edit bumps the clock");
+        assert_eq!(dirty, 1, "and marks the row for push");
+
+        // Per-device bookkeeping (the calendar link) is not board data.
+        conn.execute(
+            "UPDATE tasks SET board_dirty = 0, updated_ts = 7 WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE tasks SET calendar_event_id = 'evt' WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+        let (ts, dirty): (i64, i64) = conn
+            .query_row(
+                "SELECT updated_ts, board_dirty FROM tasks WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((ts, dirty), (7, 0), "learning a link stamps nothing");
+
+        // A remote apply writes its own clock - the trigger must not claim
+        // the edit as ours and echo it back.
+        conn.execute(
+            "UPDATE tasks SET title = 'from the phone', updated_ts = 99, board_dirty = 0
+             WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+        let (ts, dirty): (i64, i64) = conn
+            .query_row(
+                "SELECT updated_ts, board_dirty FROM tasks WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((ts, dirty), (99, 0), "a remote apply stays remote");
+
+        // A remote insert brings its uid; the mint trigger steps aside.
+        conn.execute(
+            "INSERT INTO tasks(title, status, created_ts, uid, updated_ts, board_dirty)
+             VALUES('born elsewhere', 'open', 'now', 'mobile-uid', 50, 0)",
+            [],
+        )
+        .unwrap();
+        let (uid, ts, dirty): (String, i64, i64) = conn
+            .query_row(
+                "SELECT uid, updated_ts, board_dirty FROM tasks WHERE uid = 'mobile-uid'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((uid.as_str(), ts, dirty), ("mobile-uid", 50, 0));
+
+        // Touching an area marks the areas list for push.
+        conn.execute("DELETE FROM settings WHERE key = 'board_areas_dirty'", [])
+            .unwrap();
+        tasks::add_context(&conn, "Errands").unwrap();
+        assert_eq!(
+            get_setting(&conn, "board_areas_dirty").as_deref(),
+            Some("1")
+        );
+    }
+
+    #[test]
     fn migrating_an_already_current_database_is_a_no_op() {
         let conn = Connection::open_in_memory().unwrap();
         migrate(&conn).unwrap();
@@ -493,6 +697,6 @@ mod migration_tests {
         migrate(&conn).unwrap();
         let after: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(before, after);
-        assert_eq!(after, 7);
+        assert_eq!(after, 8);
     }
 }

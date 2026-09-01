@@ -20,8 +20,8 @@ const BASE: &str = "https://www.googleapis.com/calendar/v3";
 pub type Busy = (DateTime<Local>, DateTime<Local>);
 
 pub struct Client {
-    http: reqwest::blocking::Client,
-    access: String,
+    pub(super) http: reqwest::blocking::Client,
+    pub(super) access: String,
 }
 
 /// What `insert_event` hands back: enough to record the link on the task.
@@ -34,6 +34,10 @@ pub struct EventRef {
 pub struct EventItem {
     pub id: String,
     pub task_id: Option<i64>,
+    /// The cross-device identity, when the event carries one. Mobile-born
+    /// events always do; desktop events made before the board channel are
+    /// claimed lazily by the poll.
+    pub task_uid: Option<String>,
     pub cancelled: bool,
     pub start_ts: Option<i64>,
 }
@@ -111,16 +115,24 @@ impl Client {
     pub fn insert_event(
         &self,
         task_id: i64,
+        task_uid: Option<&str>,
         title: &str,
         start: DateTime<Local>,
         end: DateTime<Local>,
     ) -> Result<EventRef, String> {
+        // Both identities ride along: the rowid for this install's own poll
+        // (the pre-uid contract), the uid for every other device. The mobile
+        // app writes the same pair.
+        let mut private = serde_json::json!({ "thresholdTaskId": task_id.to_string() });
+        if let Some(uid) = task_uid {
+            private["thresholdTaskUid"] = serde_json::json!(uid);
+        }
         let body = serde_json::json!({
             "summary": title,
             "description": "Scheduled by Threshold.",
             "start": { "dateTime": start.to_rfc3339() },
             "end": { "dateTime": end.to_rfc3339() },
-            "extendedProperties": { "private": { "thresholdTaskId": task_id.to_string() } },
+            "extendedProperties": { "private": private },
             "reminders": { "useDefault": false, "overrides": [{ "method": "popup", "minutes": 10 }] },
         });
         let resp: serde_json::Value = self
@@ -160,6 +172,24 @@ impl Client {
             .map_err(|err| format!("could not move the event: {err}"))?
             .error_for_status()
             .map_err(|err| format!("Google refused the move: {err}"))?;
+        Ok(())
+    }
+
+    /// Stamp the cross-device uid onto an event that predates the board
+    /// channel. PATCH merges private properties by key, so the legacy
+    /// thresholdTaskId stays.
+    pub fn claim_event_uid(&self, event_id: &str, uid: &str) -> Result<(), String> {
+        let body = serde_json::json!({
+            "extendedProperties": { "private": { "thresholdTaskUid": uid } },
+        });
+        self.http
+            .patch(format!("{BASE}/calendars/primary/events/{event_id}"))
+            .bearer_auth(&self.access)
+            .json(&body)
+            .send()
+            .map_err(|err| format!("could not claim the event: {err}"))?
+            .error_for_status()
+            .map_err(|err| format!("Google refused the claim: {err}"))?;
         Ok(())
     }
 
@@ -218,14 +248,21 @@ impl Client {
         if let Some(events) = value.get("items").and_then(|v| v.as_array()) {
             for ev in events {
                 let Some(id) = ev.get("id").and_then(|v| v.as_str()) else { continue };
-                let task_id = ev
+                let private = ev
                     .get("extendedProperties")
-                    .and_then(|e| e.get("private"))
+                    .and_then(|e| e.get("private"));
+                let task_id = private
                     .and_then(|p| p.get("thresholdTaskId"))
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.parse::<i64>().ok());
-                // Only ours.
-                if task_id.is_none() {
+                let task_uid = private
+                    .and_then(|p| p.get("thresholdTaskUid"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                // Only Threshold's events - though a rowid alone no longer
+                // proves whose: another device's rowids collide with ours,
+                // so the poll resolves by uid first when one is present.
+                if task_id.is_none() && task_uid.is_none() {
                     continue;
                 }
                 let cancelled = ev.get("status").and_then(|v| v.as_str()) == Some("cancelled");
@@ -238,6 +275,7 @@ impl Client {
                 items.push(EventItem {
                     id: id.to_string(),
                     task_id,
+                    task_uid,
                     cancelled,
                     start_ts,
                 });

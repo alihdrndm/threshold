@@ -13,6 +13,7 @@
 //! convenience on top of the matrix, never a gate in front of it.
 
 pub mod api;
+pub mod board;
 pub mod oauth;
 pub mod repeat;
 pub mod settings;
