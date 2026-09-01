@@ -208,7 +208,10 @@ export function Ritual({ trigger }: { trigger: string }) {
               aria-hidden
               className="ritual-breath h-24 w-24 rounded-full border border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
             />
-            <Question>{theme.copy.greeting}</Question>
+            {/* The user's own words open the door — the rotating greeting
+                read as filler to them ("Fresh session." — "i don't like
+                it"). The themes still rotate everything else. */}
+            <Question>What are you here for?</Question>
             <Hint>{timeLabel(now)}</Hint>
             {/* Only the opening screen. This is the one moment in the ritual you
                 are reading rather than answering; on the question screens it
