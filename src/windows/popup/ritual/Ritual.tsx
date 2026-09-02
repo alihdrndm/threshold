@@ -14,6 +14,7 @@ import {
 } from "@/lib/tauri";
 import { themeById, themeFor } from "@/themes";
 import {
+  BROWSING_WORDS,
   CATEGORIES,
   DURATIONS,
   EXPRESS,
@@ -441,6 +442,24 @@ export function Ritual({ trigger }: { trigger: string }) {
 
         {step === "browsing" && (
           <Step key="browsing" stepKey="browsing">
+            {/* The user's own words at the exit, read before the question
+                rather than instead of it: nothing here blocks the way on. */}
+            <div className="flex max-w-lg flex-col gap-4 text-left">
+              <p className="text-sm leading-relaxed text-[var(--color-ink-muted)]">
+                {BROWSING_WORDS.leadIn}
+              </p>
+              <p className="leading-relaxed text-[var(--color-ink)]">
+                {BROWSING_WORDS.saying}
+              </p>
+              <ul className="flex flex-col gap-1.5 pl-4 leading-relaxed text-[var(--color-ink)]/90">
+                {BROWSING_WORDS.five.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+              <p className="text-sm text-[var(--color-accent)]">
+                {BROWSING_WORDS.source}
+              </p>
+            </div>
             <Question>Will you keep it under thirty minutes?</Question>
             {/* Same reasoning as the prediction step: an unfocused pair keeps
                 the answer the user's own. */}
