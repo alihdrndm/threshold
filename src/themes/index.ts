@@ -16,7 +16,7 @@ export const THEMES: readonly Theme[] = [
     durationMode: "chips",
     copy: {
       greeting: "Fresh session.",
-      intentionPrompt: "What are you here for?",
+      intentionPrompt: "Say it in a few words.",
       predictionPrompt: "Will you start this before opening anything else?",
       ifThenPrompt: "If I feel the urge to open a feed, then I will…",
       durationPrompt: "How long?",

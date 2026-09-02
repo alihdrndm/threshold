@@ -16,6 +16,31 @@ export const IF_THEN_DEFAULTS = [
 
 export const DURATIONS = [25, 50, 90] as const;
 
+/**
+ * The words the user chose to meet at the honourable exit.
+ *
+ * Not the app moralising — the same rule the quote reservoir runs on: a
+ * line you picked yourself is not the app talking, and it is doing a
+ * different job. Nothing here blocks or delays; the browsing is recorded
+ * either way and the way on is one click.
+ *
+ * Set exactly as given. Only the line breaks are ours, because the five
+ * are five and the eye should be able to stack them.
+ */
+export const BROWSING_WORDS = {
+  leadIn:
+    "Narrated Ibn Abbas, who said: The Messenger of Allah ﷺ said to a man while advising him:",
+  saying: "Take advantage of five things before they’re gone:",
+  five: [
+    "your youth before your old age,",
+    "your health before your illness,",
+    "your wealth before your poverty,",
+    "your free time before you become occupied,",
+    "and your life before your death.",
+  ],
+  source: "Al-Mustadrak ‘ala al-Sahihayn (7846)",
+} as const;
+
 export const MIN_DURATION = 10;
 export const MAX_DURATION = 120;
 

@@ -14,6 +14,7 @@ import {
 } from "@/lib/tauri";
 import { themeById, themeFor } from "@/themes";
 import {
+  BROWSING_WORDS,
   CATEGORIES,
   DURATIONS,
   EXPRESS,
@@ -208,7 +209,10 @@ export function Ritual({ trigger }: { trigger: string }) {
               aria-hidden
               className="ritual-breath h-24 w-24 rounded-full border border-[color-mix(in_srgb,var(--color-accent)_60%,transparent)]"
             />
-            <Question>{theme.copy.greeting}</Question>
+            {/* The user's own words open the door — the rotating greeting
+                read as filler to them ("Fresh session." — "i don't like
+                it"). The themes still rotate everything else. */}
+            <Question>What are you here for?</Question>
             <Hint>{timeLabel(now)}</Hint>
             {/* Only the opening screen. This is the one moment in the ritual you
                 are reading rather than answering; on the question screens it
@@ -373,6 +377,27 @@ export function Ritual({ trigger }: { trigger: string }) {
               </div>
             )}
 
+            {/* Self-set limits are the ones people keep: any number of
+                minutes, whatever presets the day's theme offers. */}
+            <label className="flex items-center gap-2 text-sm text-[var(--color-ink-muted)]">
+              or exactly
+              <input
+                type="number"
+                min={1}
+                max={MAX_DURATION}
+                placeholder="min"
+                onChange={(event) => {
+                  const n = Number(event.target.value);
+                  if (Number.isFinite(n) && n >= 1) {
+                    setDuration(Math.min(Math.round(n), MAX_DURATION));
+                  }
+                }}
+                aria-label="Custom session length in minutes"
+                className="w-16 rounded-none border-0 border-b border-[var(--color-border-subtle)] bg-transparent px-1 py-0.5 text-center text-[var(--color-ink)] outline-none focus:border-[var(--color-accent)]"
+              />
+              minutes
+            </label>
+
             <div className="flex w-full flex-col items-center gap-3">
               <Hint>{EXPRESS.categories}</Hint>
               <div className="flex flex-wrap justify-center gap-2">
@@ -417,6 +442,24 @@ export function Ritual({ trigger }: { trigger: string }) {
 
         {step === "browsing" && (
           <Step key="browsing" stepKey="browsing">
+            {/* The user's own words at the exit, read before the question
+                rather than instead of it: nothing here blocks the way on. */}
+            <div className="flex max-w-lg flex-col gap-4 text-left">
+              <p className="text-sm leading-relaxed text-[var(--color-ink-muted)]">
+                {BROWSING_WORDS.leadIn}
+              </p>
+              <p className="leading-relaxed text-[var(--color-ink)]">
+                {BROWSING_WORDS.saying}
+              </p>
+              <ul className="flex flex-col gap-1.5 pl-4 leading-relaxed text-[var(--color-ink)]/90">
+                {BROWSING_WORDS.five.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+              <p className="text-sm text-[var(--color-accent)]">
+                {BROWSING_WORDS.source}
+              </p>
+            </div>
             <Question>Will you keep it under thirty minutes?</Question>
             {/* Same reasoning as the prediction step: an unfocused pair keeps
                 the answer the user's own. */}

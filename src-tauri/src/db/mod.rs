@@ -371,6 +371,57 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         .map_err(|err| format!("migration 8 failed: {err}"))?;
     }
 
+    if version < 9 {
+        // The quote reservoir joins the board channel. Any change to the
+        // quotes table marks the list for push and stamps its LWW clock;
+        // a remote apply overwrites both afterwards, so its own writes are
+        // never claimed as ours (the areas pattern, verbatim).
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            CREATE TRIGGER IF NOT EXISTS trg_quotes_board_insert
+            AFTER INSERT ON quotes
+            BEGIN
+                INSERT INTO settings(key, value) VALUES('board_quotes_dirty','1')
+                ON CONFLICT(key) DO UPDATE SET value = '1';
+                INSERT INTO settings(key, value)
+                VALUES('quotes_updated_ts', strftime('%s','now'))
+                ON CONFLICT(key) DO UPDATE SET value = strftime('%s','now');
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_quotes_board_update
+            AFTER UPDATE ON quotes
+            BEGIN
+                INSERT INTO settings(key, value) VALUES('board_quotes_dirty','1')
+                ON CONFLICT(key) DO UPDATE SET value = '1';
+                INSERT INTO settings(key, value)
+                VALUES('quotes_updated_ts', strftime('%s','now'))
+                ON CONFLICT(key) DO UPDATE SET value = strftime('%s','now');
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_quotes_board_delete
+            AFTER DELETE ON quotes
+            BEGIN
+                INSERT INTO settings(key, value) VALUES('board_quotes_dirty','1')
+                ON CONFLICT(key) DO UPDATE SET value = '1';
+                INSERT INTO settings(key, value)
+                VALUES('quotes_updated_ts', strftime('%s','now'))
+                ON CONFLICT(key) DO UPDATE SET value = strftime('%s','now');
+            END;
+            -- Quotes that predate the triggers still deserve the trip: a
+            -- non-empty reservoir starts marked, so the first pass ships it.
+            INSERT INTO settings(key, value)
+            SELECT 'board_quotes_dirty', '1' WHERE EXISTS(SELECT 1 FROM quotes)
+            ON CONFLICT(key) DO UPDATE SET value = '1';
+            INSERT INTO settings(key, value)
+            SELECT 'quotes_updated_ts', strftime('%s','now')
+            WHERE EXISTS(SELECT 1 FROM quotes)
+            ON CONFLICT(key) DO UPDATE SET value = strftime('%s','now');
+            PRAGMA user_version = 9;
+            COMMIT;
+            "#,
+        )
+        .map_err(|err| format!("migration 9 failed: {err}"))?;
+    }
+
     Ok(())
 }
 
@@ -448,6 +499,15 @@ mod migration_tests {
                 created_ts TEXT,
                 completed_ts TEXT
             );
+            -- Migration 4's own table: the quote-sync triggers (migration 9)
+            -- reference it, so an honest v4 fixture must carry it.
+            CREATE TABLE quotes(
+                id INTEGER PRIMARY KEY,
+                text TEXT NOT NULL,
+                author TEXT,
+                created_ts TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX idx_quotes_text ON quotes(text);
             PRAGMA user_version = 4;
             COMMIT;
             "#,
@@ -472,7 +532,7 @@ mod migration_tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 8, "the schema advanced to head");
+        assert_eq!(version, 9, "the schema advanced to head");
 
         // The task is untouched, and the new columns exist and default to NULL.
         let task = tasks::by_id(&conn, 7).unwrap().unwrap();
@@ -521,7 +581,7 @@ mod migration_tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
 
         let task = tasks::by_id(&conn, 3).unwrap().unwrap();
         assert_eq!(task.scheduled_ts, Some(1_700_000_000));
@@ -565,7 +625,7 @@ mod migration_tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
 
         // Existing data untouched; the new columns exist and read as NULL.
         let (fired, snoozed): (Option<i64>, Option<i64>) = conn
@@ -697,6 +757,6 @@ mod migration_tests {
         migrate(&conn).unwrap();
         let after: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
         assert_eq!(before, after);
-        assert_eq!(after, 8);
+        assert_eq!(after, 9);
     }
 }
