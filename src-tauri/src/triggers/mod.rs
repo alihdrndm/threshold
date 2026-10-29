@@ -21,10 +21,11 @@ pub use debounce::{Decision, TriggerKind, TriggerState};
 
 static STATE: Mutex<Option<TriggerState>> = Mutex::new(None);
 
-/// What the operating system told us. Distinct from [`TriggerKind`]: a lock is
-/// a system event that never prompts, it only starts the away timer.
+/// What the operating system told us. Distinct from [`TriggerKind`]: a lock or
+/// a suspend is a system event that never prompts, it only records leaving.
 #[derive(Debug, Clone, Copy)]
 pub enum SystemEvent {
+    Suspending,
     Resumed,
     Locked,
     Unlocked,
@@ -33,9 +34,11 @@ pub enum SystemEvent {
 pub fn init(app: AppHandle) {
     // Honour the configured thresholds. They were persisted by the settings
     // panel and then never read, so changing them silently did nothing.
+    // Kept rather than replaced if a trigger got here first. A relaunch handed
+    // over by the single-instance plugin can arrive while setup is still
+    // running; replacing the state then would forget the ritual it opened.
     let (lock_threshold, min_gap) = read_thresholds(&app);
-    *STATE.lock().expect("trigger state poisoned") =
-        Some(TriggerState::with_thresholds(lock_threshold, min_gap));
+    with_state(|state| state.set_thresholds(lock_threshold, min_gap));
     message_window::spawn(app);
 }
 
@@ -89,6 +92,10 @@ fn handle_system_event(app: &AppHandle, event: SystemEvent) {
             with_state(|state| state.mark_locked(now));
             return;
         }
+        SystemEvent::Suspending => {
+            with_state(|state| state.mark_suspended());
+            return;
+        }
         SystemEvent::Resumed => {
             // A wake is a good moment to reconcile the calendar: the machine
             // may have slept through a change made on the phone.
@@ -111,7 +118,7 @@ pub fn request_focus(app: &AppHandle, prefill: crate::popup::Prefill) -> Result<
     }
 
     let now = Instant::now();
-    match with_state(|state| state.evaluate(TriggerKind::Manual, now)).unwrap_or(Decision::Show) {
+    match with_state(|state| state.evaluate(TriggerKind::Manual, now)) {
         Decision::Show => {
             with_state(|state| state.mark_shown(now));
             crate::popup::show_with_prefill(app, TriggerKind::Manual, prefill).map_err(|err| {
@@ -152,7 +159,7 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
     }
 
     let now = Instant::now();
-    let decision = with_state(|state| state.evaluate(kind, now)).unwrap_or(Decision::Show);
+    let decision = with_state(|state| state.evaluate(kind, now));
 
     match decision {
         Decision::Show => {
@@ -160,10 +167,7 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
             // trigger that arrives while the session is locked cannot display
             // anything; marking it shown anyway meant the unlock that followed
             // was dismissed as too soon, and the user saw nothing at all.
-            // The kind is recorded too: an unlock straight after a wake is the
-            // same return to the machine, and the wake's ritual was built
-            // behind the lock screen where nobody could see it.
-            with_state(|state| state.mark_shown_for(kind, now));
+            with_state(|state| state.mark_shown(now));
             crate::log::line(&format!("{kind:?}: opening the ritual"));
             if let Err(err) = crate::popup::show(app, kind) {
                 crate::log::line(&format!("{kind:?}: could not open the ritual: {err}"));
@@ -173,7 +177,7 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
         // Each of these is correct behaviour, and each one previously looked
         // exactly like the app being broken.
         Decision::TooSoon => {
-            let gap = with_state(|state| state.min_gap().as_secs()).unwrap_or(0);
+            let gap = with_state(|state| state.min_gap().as_secs());
             crate::log::line(&format!(
                 "{kind:?}: suppressed, a ritual was shown less than {gap} seconds ago (see Settings)"
             ));
@@ -185,6 +189,10 @@ pub fn request(app: &AppHandle, kind: TriggerKind) {
         Decision::SessionInProgress => {
             crate::log::line(&format!("{kind:?}: suppressed, a focus session is running"))
         }
+        Decision::SameReturn => crate::log::line(&format!(
+            "{kind:?}: suppressed, the same return a ritual was just shown for (no lock or \
+             sleep since)"
+        )),
     }
 }
 
@@ -258,9 +266,15 @@ fn is_paused(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-fn with_state<T>(f: impl FnOnce(&mut TriggerState) -> T) -> Option<T> {
+/// Run `f` against the trigger state, creating it with the defaults if `init`
+/// has not run yet.
+///
+/// It used to answer "no state" with "show", unrecorded, so a trigger that
+/// beat `init` opened a ritual nothing remembered, and the boot trigger
+/// straight after it opened a second.
+fn with_state<T>(f: impl FnOnce(&mut TriggerState) -> T) -> T {
     let mut guard = STATE.lock().expect("trigger state poisoned");
-    guard.as_mut().map(f)
+    f(guard.get_or_insert_with(TriggerState::default))
 }
 
 /// Map a `--trigger=` argument onto a kind. Used by the scheduled tasks and by
@@ -277,4 +291,41 @@ pub fn kind_from_args(args: &[String]) -> Option<TriggerKind> {
         "--ritual" => Some(TriggerKind::Manual),
         _ => None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The double ritual at every boot. Setup registers the tray icon before
+    /// `init`, and registering one waits on Explorer, which at boot is slow;
+    /// while it waits, Windows delivers the single-instance plugin's message
+    /// from the second launch. Its boot trigger found no state, was shown and
+    /// not recorded, and `init` then replaced the state wholesale - so setup's
+    /// own boot trigger showed the ritual again.
+    ///
+    /// The only test that touches the global state.
+    #[test]
+    fn a_trigger_that_beats_init_is_still_remembered() {
+        *STATE.lock().unwrap() = None;
+        let now = Instant::now();
+
+        // The relaunch handed over during setup.
+        assert_eq!(
+            with_state(|state| state.evaluate(TriggerKind::Boot, now)),
+            Decision::Show
+        );
+        with_state(|state| state.mark_shown(now));
+
+        // What `init` does once setup reaches it, with the gap at its lowest.
+        with_state(|state| {
+            state.set_thresholds(std::time::Duration::ZERO, std::time::Duration::ZERO)
+        });
+
+        // Setup's own boot trigger.
+        assert_eq!(
+            with_state(|state| state.evaluate(TriggerKind::Boot, Instant::now())),
+            Decision::SameReturn
+        );
+    }
 }

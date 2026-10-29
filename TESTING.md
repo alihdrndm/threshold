@@ -4,7 +4,7 @@ Automated checks cover the logic. The trigger moments themselves need a human,
 because no harness can genuinely reboot, sleep, or unlock the machine.
 
 ```bash
-cargo test                  # 65 tests across both binaries
+cargo test                  # 232 tests across the workspace
 cargo clippy --all-targets
 npm run check               # tsc + eslint
 ```
@@ -35,6 +35,8 @@ a connection error.
 | Hidden trigger window created, never shown | class `ThresholdTriggerWindow`, not visible |
 | Wake or unlock opens the ritual | fullscreen window appears on the primary display only |
 | Second trigger inside 15 min suppressed | 0 popups; log shows `suppressed (TooSoon)` |
+| One return is one ritual, whatever the gap | every pair of boot/wake/unlock with no lock or sleep between is `SameReturn`, gap at zero included (`debounce.rs`, `ritual_survives_repeat_triggers.rs`) |
+| A relaunch handed over during setup is remembered | `triggers::tests::a_trigger_that_beats_init_is_still_remembered` |
 | Scheduled tasks register without elevation | `--register-tasks` then `--task-status` |
 | Relaunch path | `schtasks /run /tn ThresholdUnlock` starts the app and shows the ritual |
 
@@ -79,7 +81,10 @@ Register the relaunch tasks first (`threshold.exe --register-tasks`). The
 debounce instead of the trigger.
 
 1. **Cold boot.** Reboot. The ritual appears about ten seconds after the
-   desktop, exactly once.
+   desktop, exactly once. Then shut down and power on (Fast Startup makes that
+   a resume, not a boot): once again. Repeat both with the minimum gap at 0 in
+   Settings. `threshold.exe --log` should show one `opening the ritual` and the
+   other launches as `suppressed, the same return`.
 2. **Sleep and wake.** Sleep, wait, wake. Appears once. On a Modern Standby
    laptop the wake may arrive only as an unlock — either is fine, twice is not.
 3. **Unlock after a long absence.** `Win+L`, wait past twenty minutes, unlock.

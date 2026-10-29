@@ -119,8 +119,8 @@ pub fn run() {
             triggers::init(handle.clone());
 
             // Close whatever finished while we were shut, and re-arm whatever
-            // did not. Must come after triggers::init, which replaces the
-            // trigger state wholesale, and before the boot trigger below -
+            // did not. Must come after triggers::init, which sets up the
+            // trigger state, and before the boot trigger below -
             // otherwise the logon task walks straight into a fullscreen ritual
             // on top of a commitment that is still running.
             session::reconcile_on_startup(&handle);
