@@ -144,9 +144,17 @@ pub fn run() {
 
             // Launched by the logon task or the autostart entry: this *is* the
             // boot moment, so ask for the ritual straight away.
+            //
+            // Launched with no trigger at all, it was a person - the Start menu,
+            // Search, a shortcut - and they asked for the app. Every machine
+            // launch carries an argument (`--autostart`, `--trigger=...`), so
+            // this cannot fire at boot. It used to open nothing, leaving them
+            // to find the tray; the single-instance callback above has always
+            // opened the dashboard for the same click.
             let args: Vec<String> = std::env::args().collect();
-            if let Some(kind) = triggers::kind_from_args(&args) {
-                triggers::request(&handle, kind);
+            match triggers::kind_from_args(&args) {
+                Some(kind) => triggers::request(&handle, kind),
+                None => show_main(&handle),
             }
 
             Ok(())
@@ -434,7 +442,16 @@ pub(crate) fn elevate_register_helper() -> Result<(), String> {
         ));
     }
 
-    let status = std::process::Command::new("powershell")
+    // `-WindowStyle Hidden` only hides the console once PowerShell is running;
+    // the window it was given still flashes first. The UAC prompt itself is
+    // the elevated process's, and is unaffected.
+    let mut powershell = std::process::Command::new("powershell");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        powershell.creation_flags(triggers::scheduled_tasks::CREATE_NO_WINDOW);
+    }
+    let status = powershell
         .args([
             "-NoProfile",
             "-WindowStyle",

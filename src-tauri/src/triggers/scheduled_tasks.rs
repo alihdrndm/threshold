@@ -24,7 +24,7 @@ use std::os::windows::process::CommandExt;
 
 /// Keep `schtasks` from flashing a console window when we shell out.
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub const LOGON_TASK: &str = "ThresholdLogon";
 pub const UNLOCK_TASK: &str = "ThresholdUnlock";

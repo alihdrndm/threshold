@@ -68,8 +68,14 @@ fn registered_path_matches_current() -> bool {
     };
     let current = current.to_string_lossy().to_lowercase();
 
+    // Without CREATE_NO_WINDOW, a console program started from this GUI
+    // process gets a console window of its own. This runs on every start, so
+    // every start flashed an empty window for as long as `reg` took - which
+    // read as the app trying to open and failing.
+    use std::os::windows::process::CommandExt;
     let output = std::process::Command::new("reg")
         .args(["query", &format!(r"HKCU\{RUN_KEY}"), "/v", RUN_VALUE])
+        .creation_flags(crate::triggers::scheduled_tasks::CREATE_NO_WINDOW)
         .output();
 
     match output {
