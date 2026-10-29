@@ -381,7 +381,7 @@ pub fn seconds_remaining(lock: &proto::Lock) -> i64 {
 /// duration, or the first launch after a week away would suppress the boot
 /// ritual for a session that ended days ago.
 ///
-/// Must run after `triggers::init` (which replaces the state wholesale) and
+/// Must run after `triggers::init` (which sets up the trigger state) and
 /// before the boot trigger fires.
 pub fn reconcile_on_startup(app: &tauri::AppHandle) {
     use crate::db::{sessions, Db};
