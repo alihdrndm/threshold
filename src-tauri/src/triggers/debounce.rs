@@ -40,16 +40,25 @@ pub enum Decision {
     TooSoon,
     /// Unlocked, but the machine had not been locked long enough to count.
     NotAwayLongEnough,
+    /// Another report of the return a ritual was just shown for.
+    ///
+    /// One return reaches the app by several roads - the autostart entry and
+    /// the logon task at boot, the in-process listener and the unlock task at
+    /// an unlock - and each arrives as its own trigger.
+    SameReturn,
 }
 
-/// How long after a wake an unlock still counts as the same return.
+/// How long the roads into one return can take to all arrive.
 ///
-/// A machine woken at the lock screen cannot display anything: the ritual is
-/// created behind the lock and never seen. The unlock moments later is the
-/// first opportunity the user actually has, so it is allowed through rather
-/// than dismissed as a duplicate. Longer than this and they are two separate
-/// returns.
-pub const WAKE_HANDOVER: Duration = Duration::from_secs(180);
+/// The minimum gap used to collapse them, until Settings let it go down to
+/// seconds: with a gap of ten seconds, the autostart entry and the logon task
+/// (which waits ten seconds on purpose) each opened a ritual at every boot.
+/// Whether two triggers are one return is not a preference, so it no longer
+/// rides on the gap. It is decided by whether the user was seen leaving in
+/// between - a lock or a suspend - and this window only bounds how long that
+/// is trusted, in case the leaving was never reported. A slow boot can start
+/// the Run entries minutes after logon, hence minutes rather than seconds.
+pub const SAME_RETURN: Duration = Duration::from_secs(5 * 60);
 
 /// A running session, as the debounce sees it.
 #[derive(Debug, Clone, Copy)]
@@ -76,7 +85,9 @@ pub struct Session {
 #[derive(Debug)]
 pub struct TriggerState {
     last_shown: Option<Instant>,
-    last_kind: Option<TriggerKind>,
+    /// Whether the user was seen leaving - a lock or a suspend - since the
+    /// last ritual. Without that, the next trigger is the same return again.
+    left_since_shown: bool,
     locked_at: Option<Instant>,
     session: Option<Session>,
     lock_threshold: Duration,
@@ -87,7 +98,7 @@ impl Default for TriggerState {
     fn default() -> Self {
         Self {
             last_shown: None,
-            last_kind: None,
+            left_since_shown: false,
             locked_at: None,
             session: None,
             lock_threshold: DEFAULT_LOCK_THRESHOLD,
@@ -119,6 +130,12 @@ impl TriggerState {
 
     pub fn mark_locked(&mut self, now: Instant) {
         self.locked_at = Some(now);
+        self.left_since_shown = true;
+    }
+
+    /// The machine is going to sleep. Whatever wakes it is a new return.
+    pub fn mark_suspended(&mut self) {
+        self.left_since_shown = true;
     }
 
     /// Undo `mark_shown`, for a ritual that was recorded and then never
@@ -127,13 +144,9 @@ impl TriggerState {
         self.last_shown = None;
     }
 
-    pub fn mark_shown_for(&mut self, kind: TriggerKind, now: Instant) {
-        self.last_kind = Some(kind);
-        self.mark_shown(now);
-    }
-
     pub fn mark_shown(&mut self, now: Instant) {
         self.last_shown = Some(now);
+        self.left_since_shown = false;
         // A fresh prompt supersedes the away timer; the next unlock has to earn
         // its own.
         self.locked_at = None;
@@ -180,16 +193,18 @@ impl TriggerState {
         }
 
         if let Some(last) = self.last_shown {
-            if now.duration_since(last) < self.min_gap {
-                // One exception: an unlock shortly after a wake. The wake's
-                // ritual was built behind the lock screen and never seen, so
-                // this is the user's first real chance at it, not a duplicate.
-                let handing_over = kind == TriggerKind::Unlock
-                    && self.last_kind == Some(TriggerKind::Wake)
-                    && now.duration_since(last) < WAKE_HANDOVER;
-                if !handing_over {
-                    return Decision::TooSoon;
-                }
+            let since = now.saturating_duration_since(last);
+            if since < self.min_gap {
+                return Decision::TooSoon;
+            }
+            // However short the gap, nobody can come back without having
+            // left. There used to be an exception here for an unlock just
+            // after a wake, because the wake's ritual was built behind the
+            // lock screen; boot and wake now wait for the unlock instead of
+            // building it there, so the exception only ever let the second
+            // copy of one return through.
+            if since < SAME_RETURN && !self.left_since_shown {
+                return Decision::SameReturn;
             }
         }
 
@@ -256,8 +271,10 @@ mod tests {
         let mut state =
             TriggerState::with_thresholds(Duration::from_secs(5), Duration::from_secs(10));
         state.mark_shown(ago(11));
+        state.mark_suspended();
         assert_eq!(state.evaluate(TriggerKind::Wake, Instant::now()), Decision::Show);
         state.mark_shown(ago(3));
+        state.mark_suspended();
         assert_eq!(state.evaluate(TriggerKind::Wake, Instant::now()), Decision::TooSoon);
 
         state.mark_shown(ago(60));
@@ -273,6 +290,7 @@ mod tests {
     fn changing_thresholds_keeps_what_already_happened() {
         let mut state = TriggerState::default();
         state.mark_shown(ago(30));
+        state.mark_suspended();
         state.set_thresholds(Duration::from_secs(5), Duration::from_secs(20));
         assert_eq!(
             state.evaluate(TriggerKind::Wake, Instant::now()),
@@ -281,6 +299,95 @@ mod tests {
         );
         state.set_thresholds(Duration::from_secs(5), Duration::from_secs(60));
         assert_eq!(state.evaluate(TriggerKind::Wake, Instant::now()), Decision::TooSoon);
+    }
+
+    #[test]
+    fn one_return_is_one_ritual_however_short_the_gap() {
+        // The autostart entry and the logon task, ten seconds apart, each
+        // opened a ritual at boot whenever the gap was below those ten
+        // seconds, because the gap was the only thing that collapsed them.
+        // Every pair, in every order, with both thresholds at zero.
+        let automatic = [TriggerKind::Boot, TriggerKind::Wake, TriggerKind::Unlock];
+        for first in automatic {
+            for second in automatic {
+                let mut state = TriggerState::with_thresholds(Duration::ZERO, Duration::ZERO);
+                assert_eq!(state.evaluate(first, ago(10)), Decision::Show);
+                state.mark_shown(ago(10));
+                assert_eq!(
+                    state.evaluate(second, Instant::now()),
+                    Decision::SameReturn,
+                    "{first:?} then {second:?} with nobody leaving is one return"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_slow_boot_is_still_one_return() {
+        // The Run entries can start minutes after logon on a cold disk.
+        let mut state = TriggerState::with_thresholds(Duration::ZERO, Duration::from_secs(10));
+        state.mark_shown(ago(4 * 60));
+        assert_eq!(
+            state.evaluate(TriggerKind::Boot, Instant::now()),
+            Decision::SameReturn
+        );
+    }
+
+    #[test]
+    fn leaving_in_between_makes_it_a_new_return() {
+        // The people who set the gap to seconds asked for every return, and
+        // a lock or a sleep between two triggers is a return.
+        let mut state = TriggerState::with_thresholds(Duration::ZERO, Duration::from_secs(10));
+        state.mark_shown(ago(60));
+        state.mark_locked(ago(30));
+        assert_eq!(
+            state.evaluate(TriggerKind::Unlock, Instant::now()),
+            Decision::Show
+        );
+
+        state.mark_shown(ago(60));
+        state.mark_suspended();
+        assert_eq!(
+            state.evaluate(TriggerKind::Wake, Instant::now()),
+            Decision::Show
+        );
+    }
+
+    #[test]
+    fn showing_a_ritual_closes_the_return_it_was_for() {
+        // A lock before the ritual is the absence that ritual answered; it
+        // cannot also make the next report of the same return a new one.
+        let mut state = TriggerState::with_thresholds(Duration::ZERO, Duration::ZERO);
+        state.mark_locked(ago(120));
+        state.mark_suspended();
+        state.mark_shown(ago(30));
+        assert_eq!(
+            state.evaluate(TriggerKind::Unlock, Instant::now()),
+            Decision::SameReturn
+        );
+    }
+
+    #[test]
+    fn an_unreported_absence_is_trusted_only_for_minutes() {
+        // If a lock or a sleep was never reported, the wake hours later must
+        // still be met. Only the minutes right after a ritual are assumed to
+        // be the same return.
+        let mut state = TriggerState::with_thresholds(Duration::ZERO, Duration::from_secs(10));
+        state.mark_shown(ago(SAME_RETURN.as_secs() + 1));
+        assert_eq!(
+            state.evaluate(TriggerKind::Wake, Instant::now()),
+            Decision::Show
+        );
+    }
+
+    #[test]
+    fn asking_for_it_is_never_the_same_return() {
+        let mut state = TriggerState::with_thresholds(Duration::ZERO, Duration::ZERO);
+        state.mark_shown(ago(5));
+        assert_eq!(
+            state.evaluate(TriggerKind::Manual, Instant::now()),
+            Decision::Show
+        );
     }
 
     #[test]

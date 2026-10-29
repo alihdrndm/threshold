@@ -27,6 +27,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use super::{handle_system_event, SystemEvent};
 
+/// The machine is about to sleep. Recorded so the wake that follows counts as
+/// coming back, rather than as another report of the last return.
+const PBT_APMSUSPEND: u32 = 0x0004;
+
 /// Resume from suspend with a user present.
 const PBT_APMRESUMESUSPEND: u32 = 0x0007;
 
@@ -127,6 +131,7 @@ unsafe extern "system" fn wndproc(
     match msg {
         WM_POWERBROADCAST => {
             match wparam.0 as u32 {
+                PBT_APMSUSPEND => dispatch(SystemEvent::Suspending),
                 PBT_APMRESUMESUSPEND => dispatch(SystemEvent::Resumed),
                 // Only when somebody is actually there to read it.
                 PBT_APMRESUMEAUTOMATIC if user_is_present() => {
