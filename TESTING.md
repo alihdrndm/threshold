@@ -92,7 +92,11 @@ debounce instead of the trigger.
 4. **Unlock after a brief absence.** `Win+L`, unlock within a minute. Nothing
    happens. This is the rule that stops it becoming a nuisance.
 5. **Tray icon and menu.** Appearance, and the pause submenu.
-6. **Motion.** Whether the step transitions and the glow feel right. Stills
+6. **The first open.** Quit from the tray and start again. Click the tray icon
+   once: the dashboard opens and stays. Repeat via the desktop or Start menu
+   shortcut while the app is already running, and via a reminder's "show me".
+   A failed open now leaves a `dashboard:` line in `threshold.exe --log`.
+7. **Motion.** Whether the step transitions and the glow feel right. Stills
    cannot show timing.
 
 Remove the tasks again with `threshold.exe --unregister-tasks`.

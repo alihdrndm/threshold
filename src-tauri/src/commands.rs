@@ -1311,10 +1311,10 @@ pub fn data_location() -> Result<String, String> {
     db::data_dir().map(|dir| dir.to_string_lossy().to_string())
 }
 
+/// The reminder's "show me". Through `show_main`, so it opens the dashboard
+/// when there is none yet instead of quietly doing nothing - which, with the
+/// dashboard built on demand, was the usual case.
 #[tauri::command]
 pub fn open_dashboard(app: tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    crate::show_main(&app);
 }

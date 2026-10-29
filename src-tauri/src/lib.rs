@@ -14,6 +14,7 @@ mod tray;
 pub mod triggers;
 mod wall;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::{Manager, RunEvent};
@@ -335,6 +336,36 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
         return;
     }
 
+    // Built on a thread of its own, never inline.
+    //
+    // Every caller is a handler: the tray click, the tray menu, and the
+    // single-instance callback that a click on the desktop or Start menu
+    // shortcut arrives through - which runs inside the WM_COPYDATA the second
+    // process *sent*, while that process waits. WebView2 starts up over COM,
+    // and Windows refuses those calls during a sent message, so the window's
+    // frame appeared, the webview inside it failed, and the frame was torn
+    // down again: a flash, then nothing, on every first open. The second
+    // click worked only because by then there was a window to show. Tauri
+    // documents creating windows in handlers as broken on Windows; every
+    // other window here is already built from a worker for the same reason.
+    static BUILDING: AtomicBool = AtomicBool::new(false);
+    if BUILDING.swap(true, Ordering::SeqCst) {
+        return; // A second click while the first build is under way.
+    }
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("threshold-dashboard".into())
+        .spawn(move || {
+            build_main(&app);
+            BUILDING.store(false, Ordering::SeqCst);
+        });
+    if let Err(err) = spawned {
+        BUILDING.store(false, Ordering::SeqCst);
+        log::line(&format!("dashboard: could not start building it ({err})"));
+    }
+}
+
+fn build_main(app: &tauri::AppHandle) {
     // The document's own colours are handled by the bootstrap in index.html;
     // this is only the native chrome around them. `None` means follow Windows,
     // which is also what leaves prefers-color-scheme free for the frontend.
@@ -369,11 +400,17 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
     .zoom_hotkeys_enabled(true)
     .build();
 
+    // Logged, not printed: the shipped build has no console, so a failure
+    // here used to vanish as completely as the window did.
     match built {
         Ok(window) => {
-            let _ = window.set_focus();
+            // Focus is taken on the main thread, as the ritual's show is.
+            let to_focus = window.clone();
+            let _ = window.run_on_main_thread(move || {
+                let _ = to_focus.set_focus();
+            });
         }
-        Err(err) => eprintln!("could not open the dashboard: {err}"),
+        Err(err) => log::line(&format!("dashboard: could not be opened ({err})")),
     }
 }
 
