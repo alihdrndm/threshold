@@ -406,19 +406,31 @@ fn build_main(app: &tauri::AppHandle) {
     // default in Tauri, and its absence is the kind of thing that quietly makes
     // an app unusable for anyone who needs larger text.
     .zoom_hotkeys_enabled(true)
+    // Brought forward once the page has loaded, not as the frame appears.
+    //
+    // The first open is the slow one - WebView2 starting from nothing - and
+    // while it starts, the Start menu or Search closes and Windows hands the
+    // foreground back to whatever was open before. Focus asked for as the
+    // frame appeared was spent before that, and the window ended up behind
+    // the app the user came from. The second click always worked because it
+    // only had to bring forward a window that already existed.
+    .on_page_load({
+        let focused = std::sync::Arc::new(AtomicBool::new(false));
+        move |window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished
+                && !focused.swap(true, Ordering::SeqCst)
+            {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }
+    })
     .build();
 
     // Logged, not printed: the shipped build has no console, so a failure
     // here used to vanish as completely as the window did.
-    match built {
-        Ok(window) => {
-            // Focus is taken on the main thread, as the ritual's show is.
-            let to_focus = window.clone();
-            let _ = window.run_on_main_thread(move || {
-                let _ = to_focus.set_focus();
-            });
-        }
-        Err(err) => log::line(&format!("dashboard: could not be opened ({err})")),
+    if let Err(err) = built {
+        log::line(&format!("dashboard: could not be opened ({err})"));
     }
 }
 

@@ -23,7 +23,7 @@ a connection error.
 ### Lifecycle
 | Behaviour | How |
 |---|---|
-| Starts to tray with no visible window | Win32 window enumeration + `IsWindowVisible` |
+| Starts to tray with no visible window (`--autostart`; a launch with no arguments is a person and opens the dashboard) | Win32 window enumeration + `IsWindowVisible` |
 | Second launch focuses the first | process count stays 1, window becomes visible |
 | Closing hides rather than exits | real `WM_CLOSE`; process survives |
 | Idle footprint | 28.5 MB across the process tree (budget: 60 MB) |
@@ -92,8 +92,9 @@ debounce instead of the trigger.
 4. **Unlock after a brief absence.** `Win+L`, unlock within a minute. Nothing
    happens. This is the rule that stops it becoming a nuisance.
 5. **Tray icon and menu.** Appearance, and the pause submenu.
-6. **The first open.** Quit from the tray and start again. Click the tray icon
-   once: the dashboard opens and stays. Repeat via the desktop or Start menu
+6. **The first open.** Quit from the tray, then start Threshold from Search:
+   no console flashes, and the dashboard opens in front of everything and
+   stays. Quit again, start it, and click the tray icon once: the same. Repeat via the desktop or Start menu
    shortcut while the app is already running, and via a reminder's "show me".
    A failed open now leaves a `dashboard:` line in `threshold.exe --log`.
 7. **Motion.** Whether the step transitions and the glow feel right. Stills
